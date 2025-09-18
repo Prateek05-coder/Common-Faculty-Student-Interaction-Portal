@@ -1,0 +1,36 @@
+{
+  "name": "faculty-portal-fullstack",
+  "version": "1.0.0",
+  "description": "Complete Faculty-Student Interaction Portal with React and Node.js",
+  "main": "index.js",
+  "scripts": {
+    "install-all": "npm install && cd frontend && npm install && cd ../backend && npm install",
+    "dev": "concurrently \"npm run backend:dev\" \"npm run frontend:dev\"",
+    "backend:dev": "cd backend && npm run dev",
+    "frontend:dev": "cd frontend && npm start",
+    "build": "cd frontend && npm run build",
+    "start": "cd backend && npm start",
+    "seed": "cd backend && npm run seed",
+    "test": "cd frontend && npm test && cd ../backend && npm test"
+  },
+  "keywords": [
+    "education",
+    "react",
+    "nodejs",
+    "mongodb",
+    "socketio",
+    "portal"
+  ],
+  "author": "Faculty Portal Team",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^7.6.0"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
+  "dependencies": {
+    "multer": "^2.0.2"
+  }
+}

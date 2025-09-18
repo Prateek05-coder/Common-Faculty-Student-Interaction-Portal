@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:5.0
+    container_name: faculty_portal_db
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: faculty_portal
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - faculty_portal_network
+
+  backend:
+    build: ./backend
+    container_name: faculty_portal_backend
+    ports:
+      - "5000:5000"
+    environment:
+      NODE_ENV: development
+      MONGODB_URI: mongodb://admin:password@mongodb:27017/faculty_portal?authSource=admin
+      JWT_SECRET: your_jwt_secret_key_here
+    depends_on:
+      - mongodb
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    networks:
+      - faculty_portal_network
+
+  frontend:
+    build: ./frontend
+    container_name: faculty_portal_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_API_URL: http://localhost:5000/api
+      REACT_APP_SOCKET_URL: http://localhost:5000
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - faculty_portal_network
+
+volumes:
+  mongodb_data:
+
+networks:
+  faculty_portal_network:
+    driver: bridge
