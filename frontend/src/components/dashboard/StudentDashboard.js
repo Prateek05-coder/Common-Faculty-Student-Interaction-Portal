@@ -1,31 +1,87 @@
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '../../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../hooks/useAuth';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
 const StudentDashboard = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [stats, setStats] = useState();
+  const [stats, setStats] = useState({
+    enrolledCourses: 0,
+    totalAssignments: 0,
+    submittedAssignments: 0,
+    averageGrade: 0,
+    courses: []
+  });
   const [loading, setLoading] = useState(true);
 
-  
   const loadStudentData = async () => {
     try {
-      const response = await axios.get(`http://localhost:5000/api/dashboard/student-stats`);
-      console.log(response.data.data);
-      setStats(response.data.data);
+      console.log('📊 Loading student dashboard data...');
+      console.log('API URL:', process.env.REACT_APP_API_URL);
+      
+      const response = await axios.get(`${process.env.REACT_APP_API_URL}/dashboard/student-stats`, {
+        timeout: 10000, // 10 second timeout
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log('✅ Dashboard API Response:', response.data);
+      
+      if (response.data && response.data.success) {
+        const dashboardData = response.data.data;
+        console.log('📈 Setting dashboard stats:', dashboardData);
+        
+        setStats({
+          enrolledCourses: dashboardData.enrolledCourses || 0,
+          totalAssignments: dashboardData.totalAssignments || 0,
+          submittedAssignments: dashboardData.submittedAssignments || 0,
+          averageGrade: dashboardData.averageGrade || 0,
+          courses: Array.isArray(dashboardData.courses) ? dashboardData.courses : []
+        });
+      } else {
+        throw new Error('Invalid response format');
+      }
     } catch (error) {
-      console.error('Error loading student data:', error);
-      toast.error('Failed to load dashboard data');
+      console.error('💥 Error loading student dashboard:', error);
+      console.error('Error details:', {
+        message: error.message,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data
+      });
+      
+      // Show specific error message
+      if (error.response?.status === 401) {
+        toast.error('Session expired. Please login again.');
+      } else if (error.response?.status === 403) {
+        toast.error('Access denied. Please check your permissions.');
+      } else if (error.code === 'ECONNABORTED') {
+        toast.error('Request timeout. Please check your connection.');
+      } else {
+        toast.error('Failed to load dashboard data. Using offline mode.');
+      }
+      
+      // Set safe default values
+      setStats({
+        enrolledCourses: 0,
+        totalAssignments: 0,
+        submittedAssignments: 0,
+        averageGrade: 0,
+        courses: []
+      });
     } finally {
       setLoading(false);
     }
   };
+
   useEffect(() => {
     loadStudentData();
   }, []);
+
   if (loading) {
     return (
       <div className="dashboard-loading">
@@ -35,22 +91,9 @@ const StudentDashboard = () => {
     );
   }
 
-  if (!stats) {
-    return (
-      <div className="dashboard-error">
-        <h2>Unable to load dashboard</h2>
-        <button onClick={loadStudentData} className="btn btn-primary">
-          Retry
-        </button>
-      </div>
-    );
-  }
-  
-
-  {stats && console.log(stats)};
   return (
     <div className="student-dashboard">
-      {/* Welcome Header */}
+      {/* Dashboard Header */}
       <div className="dashboard-header">
         <div className="welcome-section">
           <h1>Welcome back, {user?.name?.split(' ')[0]}!</h1>
@@ -60,28 +103,28 @@ const StudentDashboard = () => {
           <div className="stat-card">
             <i className="fas fa-book"></i>
             <div className="stat-info">
-              <span className="stat-number">{stats.enrolledCourses}</span>
+              <span className="stat-number">{stats.enrolledCourses || 0}</span>
               <span className="stat-label">Enrolled Courses</span>
             </div>
           </div>
           <div className="stat-card">
             <i className="fas fa-tasks"></i>
             <div className="stat-info">
-              <span className="stat-number">{stats.upcomingAssignments}</span>
-              <span className="stat-label">Upcoming</span>
+              <span className="stat-number">{stats.totalAssignments || 0}</span>
+              <span className="stat-label">Total Assignments</span>
             </div>
           </div>
           <div className="stat-card">
             <i className="fas fa-check-circle"></i>
             <div className="stat-info">
-              <span className="stat-number">{stats.submittedAssignments}</span>
+              <span className="stat-number">{stats.submittedAssignments || 0}</span>
               <span className="stat-label">Submitted</span>
             </div>
           </div>
           <div className="stat-card">
             <i className="fas fa-percentage"></i>
             <div className="stat-info">
-              <span className="stat-number">{stats.averageGrade}%</span>
+              <span className="stat-number">{stats.averageGrade || 0}%</span>
               <span className="stat-label">Avg Grade</span>
             </div>
           </div>
@@ -90,65 +133,6 @@ const StudentDashboard = () => {
 
       {/* Main Dashboard Content */}
       <div className="dashboard-content">
-        {/* Upcoming Deadlines */}
-        <div className="dashboard-section">
-          <div className="section-header">
-            <h2>
-              <i className="fas fa-clock"></i>
-              Upcoming Deadlines
-            </h2>
-            {/* {stats.upcomingDeadlines.length > 0 && (
-              <button 
-                className="btn btn-outline btn-sm"
-                onClick={() => navigate('/calendar')}
-              >
-                View Calendar
-              </button>
-            )} */}
-          </div>
-          
-          <div className="deadlines-list">
-            {/* {stats.upcomingDeadlines.length > 0 ? (
-              stats.upcomingDeadlines.map((assignment) => (
-                <div 
-                  key={assignment._id} 
-                  className={`deadline-item ${assignment.daysLeft <= 2 ? 'urgent' : assignment.daysLeft <= 7 ? 'warning' : ''}`}
-                  onClick={() => navigate(`/assignments/${assignment._id}`)}
-                >
-                  <div className="deadline-info">
-                    <h4>{assignment.title}</h4>
-                    <div className="assignment-meta">
-                      <span className="course-name">
-                        <i className="fas fa-book"></i>
-                        {assignment.course?.name}
-                      </span>
-                      <span className="points">
-                        <i className="fas fa-star"></i>
-                        {assignment.maxPoints} points
-                      </span>
-                    </div>
-                  </div>
-                  <div className="deadline-countdown">
-                    <div className="days-left">
-                      {assignment.daysLeft}
-                      <span>days</span>
-                    </div>
-                    <div className="due-date">
-                      Due {new Date(assignment.dueDate).toLocaleDateString()}
-                    </div>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="empty-state">
-                <i className="fas fa-calendar-check"></i>
-                <h3>All caught up!</h3>
-                <p>No upcoming assignment deadlines.</p>
-              </div>
-            )} */}
-          </div>
-        </div>
-
         {/* Progress Overview */}
         <div className="dashboard-section">
           <div className="section-header">
@@ -163,34 +147,26 @@ const StudentDashboard = () => {
               <div className="progress-header">
                 <h3>Assignment Completion</h3>
                 <span className="progress-percentage">
-                  {Math.round((stats.submittedAssignments / stats.totalAssignments) * 100) || 0}%
+                  {Math.round(((stats.submittedAssignments || 0) / (stats.totalAssignments || 1)) * 100)}%
                 </span>
               </div>
               <div className="progress-bar">
                 <div 
                   className="progress-fill"
                   style={{ 
-                    width: `${Math.round((stats.submittedAssignments / stats.totalAssignments) * 100) || 0}%` 
+                    width: `${Math.round(((stats.submittedAssignments || 0) / (stats.totalAssignments || 1)) * 100)}%` 
                   }}
                 ></div>
               </div>
               <div className="progress-details">
-                <span>{stats.submittedAssignments} of {stats.totalAssignments} completed</span>
+                <span>{stats.submittedAssignments || 0} of {stats.totalAssignments || 0} completed</span>
               </div>
             </div>
 
             <div className="progress-card">
               <div className="progress-header">
                 <h3>Overall Grade</h3>
-                <span className="grade-display">{stats.averageGrade}%</span>
-              </div>
-              <div className="grade-distribution">
-                {/* {Object.entries(stats.performance.gradeDistribution).map(([grade, count]) => (
-                  <div key={grade} className="grade-bar">
-                    <span className="grade-letter">{grade}</span>
-                    <div className="grade-count">{count}</div>
-                  </div>
-                ))} */}
+                <span className="grade-display">{stats.averageGrade || 0}%</span>
               </div>
             </div>
           </div>
@@ -212,107 +188,45 @@ const StudentDashboard = () => {
           </div>
           
           <div className="courses-grid">
-            {stats.courses.map((course) => (
-              <div 
-                key={course._id} 
-                className="course-card"
-                onClick={() => navigate(`/courses/${course._id}`)}
-              >
-                <div className="course-header">
-                  <div className="course-code">{course.code}</div>
-                  <div className="course-semester">{course.semester} {course.year}</div>
-                </div>
-                <div className="course-content">
-                  <h4>{course.name}</h4>
-                  <p className="course-instructor">
-                    <i className="fas fa-chalkboard-teacher"></i>
-                    {course.faculty?.name}
-                  </p>
-                </div>
-                <div className="course-stats">
-                  <span className="students-count">
-                    <i className="fas fa-users"></i>
-                    {/* {course.enrolledStudents?.length || 0} students */}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Recent Activity */}
-        <div className="dashboard-section">
-          <div className="section-header">
-            <h2>
-              <i className="fas fa-history"></i>
-              Recent Activity
-            </h2>
-          </div>
-          
-          <div className="activity-sections">
-            {/* Recent Forums */}
-            <div className="activity-card">
-              <h3>
-                <i className="fas fa-comments"></i>
-                Recent Discussions
-              </h3>
-              <div className="activity-list">
-                {/* {stats.recentActivity.forums.length > 0 ? (
-                  stats.recentActivity.forums.map((forum) => (
-                    <div 
-                      key={forum._id}
-                      className="activity-item"
-                      onClick={() => navigate(`/forums/${forum._id}`)}
-                    >
-                      <div className="activity-info">
-                        <h5>{forum.title}</h5>
-                        <div className="activity-meta">
-                          <span>by {forum.author?.name}</span>
-                          <span>in {forum.course?.name}</span>
-                          <span>{new Date(forum.createdAt).toLocaleDateString()}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="empty-activity">
-                    <p>No recent forum activity</p>
+            {stats.courses && Array.isArray(stats.courses) && stats.courses.length > 0 ? (
+              stats.courses.map((course) => (
+                <div 
+                  key={course._id || Math.random()} 
+                  className="course-card"
+                  onClick={() => navigate(`/courses/${course._id}`)}
+                >
+                  <div className="course-header">
+                    <div className="course-code">{course.code || 'N/A'}</div>
+                    <div className="course-semester">{course.semester || ''} {course.year || ''}</div>
                   </div>
-                )} */}
-              </div>
-            </div>
-
-            {/* Recent Videos */}
-            <div className="activity-card">
-              <h3>
-                <i className="fas fa-video"></i>
-                New Lectures
-              </h3>
-              <div className="activity-list">
-                {/* {stats.recentActivity.videos.length > 0 ? (
-                  stats.recentActivity.videos.map((video) => (
-                    <div 
-                      key={video._id}
-                      className="activity-item"
-                      onClick={() => navigate('/video-lectures')}
-                    >
-                      <div className="activity-info">
-                        <h5>{video.title}</h5>
-                        <div className="activity-meta">
-                          <span>by {video.uploadedBy?.name}</span>
-                          <span>in {video.course?.name}</span>
-                          <span>{new Date(video.createdAt).toLocaleDateString()}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="empty-activity">
-                    <p>No recent videos</p>
+                  <div className="course-content">
+                    <h4>{course.name || 'Unnamed Course'}</h4>
+                    <p className="course-instructor">
+                      <i className="fas fa-chalkboard-teacher"></i>
+                      {course.faculty?.name || course.facultyName || 'No Instructor'}
+                    </p>
                   </div>
-                )} */}
+                  <div className="course-stats">
+                    <span className="students-count">
+                      <i className="fas fa-users"></i>
+                      {course.enrolledStudents?.length || 0} students
+                    </span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state">
+                <i className="fas fa-book"></i>
+                <h3>No Courses Found</h3>
+                <p>You are not enrolled in any courses yet.</p>
+                <button 
+                  className="btn btn-primary"
+                  onClick={() => navigate('/courses')}
+                >
+                  Browse Courses
+                </button>
               </div>
-            </div>
+            )}
           </div>
         </div>
 

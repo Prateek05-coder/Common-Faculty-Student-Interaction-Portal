@@ -14,7 +14,7 @@ let demoAccountsInitialized = false;
 const generateToken = (id, role) => {
   return jwt.sign(
     { id, role },
-    process.env.JWT_SECRET || 'your-secret-key-change-this',
+    process.env.JWT_SECRET || 'your-jwt-secret',
     { expiresIn: '7d' }
   );
 };
@@ -269,7 +269,7 @@ router.get('/me', async (req, res) => {
     }
 
     const token = authHeader.substring(7);
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key-change-this');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-jwt-secret');
     
     const user = await User.findById(decoded.id)
       .populate('enrolledCourses.course', 'name code semester year faculty')
@@ -312,7 +312,7 @@ router.post('/logout', async (req, res) => {
     if (authHeader && authHeader.startsWith('Bearer ')) {
       try {
         const token = authHeader.substring(7);
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key-change-this');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-jwt-secret');
         
         await User.findByIdAndUpdate(decoded.id, {
           lastActive: new Date()
@@ -350,7 +350,7 @@ router.post('/change-password', async (req, res) => {
     }
 
     const token = authHeader.substring(7);
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key-change-this');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-jwt-secret');
     
     const { currentPassword, newPassword } = req.body;
 

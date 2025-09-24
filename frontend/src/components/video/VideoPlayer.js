@@ -7,220 +7,374 @@ import toast from 'react-hot-toast';
 const VideoPlayer = ({ video, onClose }) => {
   const { user } = useAuth();
   const playerRef = useRef(null);
+  const fallbackVideoRef = useRef(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
   const [playbackRate, setPlaybackRate] = useState(1);
-  const [showSubtitles, setShowSubtitles] = useState(true);
-  const [selectedSubtitle, setSelectedSubtitle] = useState(null);
   const [comments, setComments] = useState(video?.comments || []);
   const [newComment, setNewComment] = useState('');
   const [showComments, setShowComments] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(video?.likes?.length || 0);
   const [showAIChatModal, setShowAIChatModal] = useState(false);
+  const [useReactPlayer, setUseReactPlayer] = useState(true);
+  const [videoError, setVideoError] = useState(false);
   const [aiChatMessages, setAiChatMessages] = useState([]);
   const [aiChatInput, setAiChatInput] = useState('');
+  const [watchTime, setWatchTime] = useState(0);
+  const [isCompleted, setIsCompleted] = useState(false);
+  const [showAttachmentModal, setShowAttachmentModal] = useState(false);
+  const [selectedAttachment, setSelectedAttachment] = useState(null);
+  const [videoUrl, setVideoUrl] = useState('');
+  const [thumbnailUrl, setThumbnailUrl] = useState('');
 
   useEffect(() => {
     // Check if user has already liked the video
     if (video?.likes) {
       setIsLiked(video.likes.some(like => like.user === user._id));
     }
-    
-    // Set default subtitle if available
-    if (video?.subtitles && video.subtitles.length > 0) {
-      setSelectedSubtitle(video.subtitles[0]);
+
+    // Check if student has completed this video
+    if (user?.role === 'student' && video?.completions) {
+      const completion = video.completions.find(c => c.student === user._id);
+      setIsCompleted(completion?.isCompleted || false);
+      setWatchTime(completion?.watchTime || 0);
     }
+
+    // Set video and thumbnail URLs
+    const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+    setVideoUrl(`${baseUrl}${video.videoUrl}`);
+    setThumbnailUrl(video.thumbnailUrl ? `${baseUrl}${video.thumbnailUrl}` : '/default-thumbnail.jpg');
   }, [video, user]);
 
+  // Cleanup effect
+  useEffect(() => {
+    return () => {
+      // Cleanup when component unmounts
+      if (playerRef.current) {
+        try {
+          playerRef.current = null;
+        } catch (error) {
+          console.warn('Error cleaning up player ref:', error);
+        }
+      }
+      if (fallbackVideoRef.current) {
+        try {
+          fallbackVideoRef.current.pause();
+          fallbackVideoRef.current = null;
+        } catch (error) {
+          console.warn('Error cleaning up video ref:', error);
+        }
+      }
+      setPlaying(false);
+    };
+  }, []);
+
+  // Handle close button click
+  const handleClose = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Stop video before closing
+    setPlaying(false);
+
+    // Call the onClose prop
+    if (onClose && typeof onClose === 'function') {
+      onClose();
+    }
+  };
+
   const handleProgress = (state) => {
-    setCurrentTime(state.playedSeconds);
+    
+    // Update watch time for students
+    if (user?.role === 'student') {
+      setWatchTime(Math.max(watchTime, state.playedSeconds));
+      
+      // Auto-mark as completed if watched 90% of the video
+      if (duration > 0 && state.playedSeconds / duration >= 0.9 && !isCompleted) {
+        handleMarkComplete();
+      }
+    }
   };
 
-  const handleDuration = (duration) => {
-    setDuration(duration);
+  const handleSeek = (time) => {
+    if (playerRef.current) {
+      playerRef.current.seekTo(time);
+      setCurrentTime(time);
+    }
   };
 
-  const handleSeek = (seconds) => {
-    playerRef.current?.seekTo(seconds);
-    setCurrentTime(seconds);
+  const handleMarkComplete = async () => {
+    if (user?.role !== 'student') return;
+
+    try {
+      await axios.post(`${process.env.REACT_APP_API_URL}/videos/${video._id}/complete`, {
+        watchTime: Math.max(watchTime, currentTime)
+      });
+      
+      setIsCompleted(true);
+      toast.success('Video marked as completed!');
+    } catch (error) {
+      console.error('Error marking video complete:', error);
+      toast.error('Failed to mark video as complete');
+    }
   };
 
-  const formatTime = (seconds) => {
-    const minutes = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${minutes}:${secs.toString().padStart(2, '0')}`;
+  const handleLike = async () => {
+    try {
+      const response = await axios.post(`${process.env.REACT_APP_API_URL}/videos/${video._id}/like`);
+      setIsLiked(!isLiked);
+      setLikeCount(response.data.data.likes.length);
+      toast.success(isLiked ? 'Removed from favorites' : 'Added to favorites');
+    } catch (error) {
+      console.error('Error liking video:', error);
+      toast.error('Failed to update like status');
+    }
   };
 
   const handleAddComment = async (e) => {
     e.preventDefault();
-    
     if (!newComment.trim()) return;
 
     try {
-      const response = await axios.post(`${process.env.REACT_APP_API_URL}/videos/${video._id}/comments`, {
-        comment: newComment,
+      const response = await axios.post(`${process.env.REACT_APP_API_URL}/videos/${video._id}/comment`, {
+        content: newComment,
         timestamp: currentTime
       });
-
-      setComments(prev => [...prev, response.data.data]);
+      
+      setComments([...comments, response.data.data]);
       setNewComment('');
-      toast.success('Comment added!');
+      toast.success('Comment added successfully');
     } catch (error) {
       console.error('Error adding comment:', error);
       toast.error('Failed to add comment');
     }
   };
 
-  const handleToggleLike = async () => {
-    try {
-      const response = await axios.post(`${process.env.REACT_APP_API_URL}/videos/${video._id}/like`);
-      setIsLiked(response.data.data.isLiked);
-      setLikeCount(response.data.data.likes);
-      toast.success(response.data.message);
-    } catch (error) {
-      console.error('Error toggling like:', error);
-      toast.error('Failed to update like status');
-    }
+  const handleViewAttachment = (attachment) => {
+    setSelectedAttachment(attachment);
+    setShowAttachmentModal(true);
+  };
+
+  const handleDownloadAttachment = (attachment) => {
+    const link = document.createElement('a');
+    link.href = `${process.env.REACT_APP_API_URL}${attachment.url}`;
+    link.download = attachment.name;
+    link.click();
   };
 
   const handleAskAI = async () => {
     if (!aiChatInput.trim()) return;
 
-    const userMessage = {
-      type: 'user',
-      message: aiChatInput,
-      timestamp: new Date()
-    };
-
-    setAiChatMessages(prev => [...prev, userMessage]);
-    setAiChatInput('');
-
     try {
-      // Simulate AI response - in production, integrate with actual AI service
+      // Add user message to chat
+      const userMessage = { role: 'user', content: aiChatInput };
+      setAiChatMessages(prev => [...prev, userMessage]);
+      
+      // Simulate AI response (you can integrate with actual AI service)
       const aiResponse = {
-        type: 'ai',
-        message: `Based on the lecture "${video.title}", here's what I can help you with regarding: "${userMessage.message}". This is a simulated AI response. In production, this would connect to an AI service like OpenAI GPT or Google's Gemini API to provide contextual answers about the video content.`,
-        timestamp: new Date()
+        role: 'assistant',
+        content: `I understand you're asking about "${aiChatInput}". This is a simulated AI response. You can integrate with actual AI services like OpenAI, Google AI, etc.`
       };
-
+      
       setTimeout(() => {
         setAiChatMessages(prev => [...prev, aiResponse]);
       }, 1000);
-
+      
+      setAiChatInput('');
     } catch (error) {
-      console.error('Error getting AI response:', error);
+      console.error('Error with AI chat:', error);
       toast.error('Failed to get AI response');
     }
   };
 
-  const jumpToCommentTime = (timestamp) => {
-    handleSeek(timestamp);
-    setPlaying(true);
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  return (
-    <div className="video-player-container">
-      <div className="video-player-header">
-        <div className="video-info">
-          <h2>{video.title}</h2>
-          <div className="video-meta">
-            <span className="course-name">{video.course?.name}</span>
-            <span className="upload-date">
-              {new Date(video.createdAt).toLocaleDateString()}
-            </span>
-            <span className="instructor">
-              by {video.uploadedBy?.name}
-            </span>
+  const getAttachmentIcon = (type) => {
+    switch (type) {
+      case 'document': return 'fa-file-alt';
+      case 'presentation': return 'fa-file-powerpoint';
+      case 'notes': return 'fa-sticky-note';
+      default: return 'fa-file';
+    }
+  };
+
+  if (!video) {
+    return (
+      <div className="video-player-modal">
+        <div className="video-player-content">
+          <div className="error-message">
+            <i className="fas fa-exclamation-triangle"></i>
+            <p>Video not found or failed to load</p>
+            <button onClick={onClose} className="btn btn-primary">Close</button>
           </div>
         </div>
-        
-        <div className="video-actions">
-          <button 
-            className={`action-btn ${isLiked ? 'liked' : ''}`}
-            onClick={handleToggleLike}
-          >
-            <i className={`fas fa-heart ${isLiked ? 'liked' : ''}`}></i>
-            {likeCount}
-          </button>
-          
-          <button 
-            className="action-btn"
-            onClick={() => setShowAIChatModal(true)}
-          >
-            <i className="fas fa-robot"></i>
-            Ask AI
-          </button>
-          
-          <button className="close-btn" onClick={onClose}>
+      </div>
+    );
+  }
+
+  return (
+    <div className="video-player-modal" onClick={(e) => {
+      // Prevent modal from closing when clicking on video area
+      if (e.target === e.currentTarget) {
+        handleClose(e);
+      }
+    }}>
+      <div className="video-player-content">
+        <div className="video-header">
+          <h2>{video.title}</h2>
+          <button className="close-btn" onClick={handleClose}>
             <i className="fas fa-times"></i>
           </button>
         </div>
-      </div>
 
-      <div className="video-player-content">
         <div className="video-main">
           <div className="video-wrapper">
-            <ReactPlayer
-              ref={playerRef}
-              url={`${process.env.REACT_APP_API_URL}${video.videoUrl}`}
-              width="100%"
-              height="100%"
-              playing={playing}
-              volume={volume}
-              playbackRate={playbackRate}
-              onProgress={handleProgress}
-              onDuration={handleDuration}
-              onPlay={() => setPlaying(true)}
-              onPause={() => setPlaying(false)}
-              controls={false}
-            />
-            
-            {/* Custom Controls */}
-            <div className="video-controls">
-              <div className="progress-bar">
+            {useReactPlayer && !videoError ? (
+              <ReactPlayer
+                ref={playerRef}
+                url={videoUrl}
+                width="100%"
+                height="500px"
+                playing={playing}
+                volume={volume}
+                playbackRate={playbackRate}
+                onProgress={handleProgress}
+                onDuration={setDuration}
+                onPlay={() => {
+                  console.log('▶️ Video playing');
+                  setPlaying(true);
+                }}
+                onPause={() => {
+                  console.log('⏸️ Video paused');
+                  setPlaying(false);
+                }}
+                onReady={() => {
+                  console.log('✅ Video ready to play');
+                  console.log('🎥 Video URL:', videoUrl);
+                }}
+                onError={(error) => {
+                  console.error('❌ ReactPlayer failed:', error);
+                  console.log('🔄 Switching to HTML5 video player...');
+                  setVideoError(true);
+                  setUseReactPlayer(false);
+                  toast.info('Switching to alternative video player...');
+                }}
+                controls={true}
+                light={false}
+                pip={true}
+                stopOnUnmount={true}
+                config={{
+                  file: {
+                    attributes: {
+                      crossOrigin: 'anonymous',
+                      controlsList: 'nodownload',
+                      preload: 'metadata'
+                    },
+                    forceVideo: true,
+                    hlsOptions: {
+                      enableWorker: false,
+                    },
+                    dashOptions: {
+                      enableWorker: false,
+                    }
+                  }
+                }}
+              />
+            ) : (
+              <video
+                ref={fallbackVideoRef}
+                width="100%"
+                height="500px"
+                controls
+                preload="metadata"
+                onLoadedMetadata={(e) => {
+                  console.log('✅ HTML5 video loaded');
+                  if (fallbackVideoRef.current && fallbackVideoRef.current.duration) {
+                    setDuration(fallbackVideoRef.current.duration);
+                  }
+                }}
+                onTimeUpdate={(e) => {
+                  if (fallbackVideoRef.current && !isNaN(fallbackVideoRef.current.currentTime)) {
+                    const currentTime = fallbackVideoRef.current.currentTime;
+                    setCurrentTime(currentTime);
+                    handleProgress({
+                      playedSeconds: currentTime,
+                      played: currentTime / (fallbackVideoRef.current.duration || 1)
+                    });
+                  }
+                }}
+                onPlay={() => {
+                  console.log('▶️ HTML5 video playing');
+                  setPlaying(true);
+                }}
+                onPause={() => {
+                  console.log('⏸️ HTML5 video paused');
+                  setPlaying(false);
+                }}
+                onError={(error) => {
+                  console.error('❌ HTML5 video error:', error);
+                  toast.error('Video file cannot be played. Please check the file format.');
+                }}
+                style={{
+                  borderRadius: '8px',
+                  backgroundColor: '#000'
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                }}
+              >
+                <source 
+                  src={videoUrl} 
+                  type="video/mp4" 
+                />
+                <source 
+                  src={videoUrl} 
+                  type="video/webm" 
+                />
+                <source 
+                  src={videoUrl} 
+                  type="video/ogg" 
+                />
+                Your browser does not support the video tag.
+              </video>
+            )}
+          </div>
+
+          {/* Custom Video Controls */}
+          <div className="custom-video-controls">
+            <div className="playback-controls">
+              <button 
+                className="control-btn play-pause"
+                onClick={() => setPlaying(!playing)}
+              >
+                <i className={`fas ${playing ? 'fa-pause' : 'fa-play'}`}></i>
+              </button>
+              
+              <div className="volume-control">
+                <i className="fas fa-volume-up"></i>
                 <input
                   type="range"
                   min="0"
-                  max={duration}
-                  value={currentTime}
-                  onChange={(e) => handleSeek(parseFloat(e.target.value))}
-                  className="progress-slider"
+                  max="1"
+                  step="0.1"
+                  value={volume}
+                  onChange={(e) => setVolume(parseFloat(e.target.value))}
+                  className="volume-slider"
                 />
-                <div className="time-display">
-                  {formatTime(currentTime)} / {formatTime(duration)}
-                </div>
               </div>
               
-              <div className="control-buttons">
-                <button 
-                  className="control-btn"
-                  onClick={() => setPlaying(!playing)}
-                >
-                  <i className={`fas ${playing ? 'fa-pause' : 'fa-play'}`}></i>
-                </button>
-                
-                <div className="volume-control">
-                  <button className="control-btn">
-                    <i className="fas fa-volume-up"></i>
-                  </button>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.1"
-                    value={volume}
-                    onChange={(e) => setVolume(parseFloat(e.target.value))}
-                    className="volume-slider"
-                  />
-                </div>
-                
+              <div className="playback-rate">
                 <select 
-                  value={playbackRate}
+                  value={playbackRate} 
                   onChange={(e) => setPlaybackRate(parseFloat(e.target.value))}
-                  className="playback-rate-select"
+                  className="speed-select"
                 >
                   <option value={0.5}>0.5x</option>
                   <option value={0.75}>0.75x</option>
@@ -229,67 +383,106 @@ const VideoPlayer = ({ video, onClose }) => {
                   <option value={1.5}>1.5x</option>
                   <option value={2}>2x</option>
                 </select>
-                
-                {video.subtitles && video.subtitles.length > 0 && (
-                  <div className="subtitle-controls">
-                    <button 
-                      className={`control-btn ${showSubtitles ? 'active' : ''}`}
-                      onClick={() => setShowSubtitles(!showSubtitles)}
-                    >
-                      <i className="fas fa-closed-captioning"></i>
-                    </button>
-                    <select
-                      value={selectedSubtitle?.language || ''}
-                      onChange={(e) => {
-                        const subtitle = video.subtitles.find(s => s.language === e.target.value);
-                        setSelectedSubtitle(subtitle);
-                      }}
-                      className="subtitle-select"
-                    >
-                      <option value="">No subtitles</option>
-                      {video.subtitles.map((subtitle, index) => (
-                        <option key={index} value={subtitle.language}>
-                          {subtitle.language} {subtitle.isAuto && '(Auto)'}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+              </div>
+              
+              <div className="progress-control">
+                <input
+                  type="range"
+                  min="0"
+                  max={duration || 0}
+                  value={currentTime}
+                  onChange={(e) => handleSeek(parseFloat(e.target.value))}
+                  className="progress-slider"
+                />
+                <div className="time-display">
+                  {formatTime(currentTime)} / {formatTime(duration)}
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Video Description */}
-          <div className="video-description">
-            <h3>About this lecture</h3>
-            <p>{video.description}</p>
-          </div>
+          {/* Video Info */}
+          <div className="video-info">
+            <div className="video-actions">
+              <button 
+                className={`action-btn ${isLiked ? 'liked' : ''}`}
+                onClick={handleLike}
+              >
+                <i className={`fas fa-heart`}></i>
+                {likeCount}
+              </button>
+              
+              {user?.role === 'student' && (
+                <button 
+                  className={`action-btn ${isCompleted ? 'completed' : ''}`}
+                  onClick={handleMarkComplete}
+                  disabled={isCompleted}
+                >
+                  <i className={`fas ${isCompleted ? 'fa-check-circle' : 'fa-circle'}`}></i>
+                  {isCompleted ? 'Completed' : 'Mark Complete'}
+                </button>
+              )}
+              
+              <button 
+                className="action-btn"
+                onClick={() => setShowComments(!showComments)}
+              >
+                <i className="fas fa-comments"></i>
+                Comments ({comments.length})
+              </button>
+              
+              <button 
+                className="action-btn"
+                onClick={() => setShowAIChatModal(true)}
+              >
+                <i className="fas fa-robot"></i>
+                Ask AI
+              </button>
+            </div>
 
-          {/* Attachments */}
-          {video.attachments && video.attachments.length > 0 && (
-            <div className="video-attachments">
-              <h3>Course Materials</h3>
-              <div className="attachments-list">
-                {video.attachments.map((attachment, index) => (
-                  <div key={index} className="attachment-item">
-                    <div className="attachment-info">
-                      <i className={`fas ${getAttachmentIcon(attachment.type)}`}></i>
-                      <span className="attachment-name">{attachment.name}</span>
-                      <span className="attachment-type">{attachment.type}</span>
+            {/* Video Description */}
+            <div className="video-description">
+              <h3>About this lecture</h3>
+              <p>{video.description}</p>
+            </div>
+
+            {/* Attachments */}
+            {video.attachments && video.attachments.length > 0 && (
+              <div className="video-attachments">
+                <h3>Course Materials</h3>
+                <div className="attachments-list">
+                  {video.attachments.map((attachment, index) => (
+                    <div key={index} className="attachment-item">
+                      <div className="attachment-info">
+                        <i className={`fas ${getAttachmentIcon(attachment.type)}`}></i>
+                        <span className="attachment-name">{attachment.name}</span>
+                        <span className="attachment-type">{attachment.type}</span>
+                        <span className="attachment-size">({(attachment.size / 1024 / 1024).toFixed(2)} MB)</span>
+                      </div>
+                      <div className="attachment-actions">
+                        <button 
+                          className="view-btn"
+                          onClick={() => handleViewAttachment(attachment)}
+                          title="View attachment"
+                        >
+                          <i className="fas fa-eye"></i>
+                          View
+                        </button>
+                        <button 
+                          className="download-btn"
+                          onClick={() => handleDownloadAttachment(attachment)}
+                          title="Download attachment"
+                        >
+                          <i className="fas fa-download"></i>
+                          Download
+                        </button>
+                      </div>
                     </div>
-                    <a 
-                      href={`${process.env.REACT_APP_API_URL}${attachment.url}`}
-                      download
-                      className="download-btn"
-                    >
-                      <i className="fas fa-download"></i>
-                      Download
-                    </a>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {/* Comments Sidebar */}
@@ -319,7 +512,8 @@ const VideoPlayer = ({ video, onClose }) => {
                       At {formatTime(currentTime)}
                     </span>
                     <button type="submit" className="btn btn-primary btn-sm">
-                      Post Comment
+                      <i className="fas fa-paper-plane"></i>
+                      Comment
                     </button>
                   </div>
                 </form>
@@ -329,36 +523,13 @@ const VideoPlayer = ({ video, onClose }) => {
                 {comments.map((comment, index) => (
                   <div key={index} className="comment-item">
                     <div className="comment-header">
-                      <div className="comment-author">
-                        <div className="author-avatar">
-                          {comment.user?.avatar ? (
-                            <img src={comment.user.avatar} alt={comment.user.name} />
-                          ) : (
-                            <div className="avatar-placeholder">
-                              {comment.user?.name?.charAt(0)?.toUpperCase()}
-                            </div>
-                          )}
-                        </div>
-                        <div className="author-info">
-                          <span className="author-name">{comment.user?.name}</span>
-                          <span className={`role-badge ${comment.user?.role}`}>
-                            {comment.user?.role}
-                          </span>
-                        </div>
-                      </div>
-                      <button 
-                        className="timestamp-btn"
-                        onClick={() => jumpToCommentTime(comment.timestamp || 0)}
-                        title="Jump to this time"
-                      >
-                        {formatTime(comment.timestamp || 0)}
-                      </button>
+                      <span className="comment-author">{comment.author?.name}</span>
+                      <span className="comment-time">
+                        {comment.timestamp && formatTime(comment.timestamp)}
+                      </span>
                     </div>
                     <div className="comment-content">
-                      <p>{comment.comment}</p>
-                    </div>
-                    <div className="comment-date">
-                      {new Date(comment.createdAt).toLocaleDateString()}
+                      {comment.content}
                     </div>
                   </div>
                 ))}
@@ -366,66 +537,32 @@ const VideoPlayer = ({ video, onClose }) => {
             </>
           )}
         </div>
-      </div>
 
-      {/* AI Chat Modal */}
-      {showAIChatModal && (
-        <div className="modal-overlay" onClick={() => setShowAIChatModal(false)}>
-          <div className="modal-content ai-chat-modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>
-                <i className="fas fa-robot"></i>
-                Ask AI about this lecture
-              </h3>
-              <button 
-                className="modal-close"
-                onClick={() => setShowAIChatModal(false)}
-              >
-                <i className="fas fa-times"></i>
-              </button>
-            </div>
+        {/* AI Chat Modal */}
+        {showAIChatModal && (
+          <div className="modal-overlay" onClick={() => setShowAIChatModal(false)}>
+            <div className="modal-content ai-chat-modal" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3>
+                  <i className="fas fa-robot"></i>
+                  Ask AI about this lecture
+                </h3>
+                <button 
+                  className="modal-close"
+                  onClick={() => setShowAIChatModal(false)}
+                >
+                  <i className="fas fa-times"></i>
+                </button>
+              </div>
 
-            <div className="modal-body">
               <div className="ai-chat-messages">
-                {aiChatMessages.length === 0 ? (
-                  <div className="ai-welcome">
-                    <i className="fas fa-robot"></i>
-                    <p>Hi! I'm your AI assistant. Ask me anything about this lecture!</p>
-                    <div className="suggested-questions">
-                      <button onClick={() => setAiChatInput('Can you summarize the main points of this lecture?')}>
-                        Summarize main points
-                      </button>
-                      <button onClick={() => setAiChatInput('What are the key concepts discussed?')}>
-                        Key concepts
-                      </button>
-                      <button onClick={() => setAiChatInput('Can you explain this topic in simpler terms?')}>
-                        Explain simply
-                      </button>
+                {aiChatMessages.map((message, index) => (
+                  <div key={index} className={`ai-message ${message.role}`}>
+                    <div className="message-content">
+                      {message.content}
                     </div>
                   </div>
-                ) : (
-                  aiChatMessages.map((message, index) => (
-                    <div key={index} className={`ai-message ${message.type}`}>
-                      <div className="message-avatar">
-                        {message.type === 'user' ? (
-                          <div className="user-avatar">
-                            {user.name?.charAt(0)?.toUpperCase()}
-                          </div>
-                        ) : (
-                          <div className="ai-avatar">
-                            <i className="fas fa-robot"></i>
-                          </div>
-                        )}
-                      </div>
-                      <div className="message-content">
-                        <p>{message.message}</p>
-                        <span className="message-time">
-                          {message.timestamp.toLocaleTimeString()}
-                        </span>
-                      </div>
-                    </div>
-                  ))
-                )}
+                ))}
               </div>
 
               <div className="ai-chat-input">
@@ -443,20 +580,79 @@ const VideoPlayer = ({ video, onClose }) => {
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {/* Attachment Viewer Modal */}
+        {showAttachmentModal && selectedAttachment && (
+          <div className="modal-overlay" onClick={() => setShowAttachmentModal(false)}>
+            <div className="modal-content attachment-modal" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3>
+                  <i className={`fas ${getAttachmentIcon(selectedAttachment.type)}`}></i>
+                  {selectedAttachment.name}
+                </h3>
+                <button 
+                  className="modal-close"
+                  onClick={() => setShowAttachmentModal(false)}
+                >
+                  <i className="fas fa-times"></i>
+                </button>
+              </div>
+
+              <div className="modal-body">
+                <div className="attachment-viewer">
+                  {selectedAttachment.type === 'document' && selectedAttachment.name.toLowerCase().endsWith('.pdf') ? (
+                    <iframe
+                      src={`${process.env.REACT_APP_API_URL}${selectedAttachment.url}`}
+                      width="100%"
+                      height="600px"
+                      title={selectedAttachment.name}
+                    />
+                  ) : selectedAttachment.type === 'presentation' ? (
+                    <div className="presentation-viewer">
+                      <iframe
+                        src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(window.location.origin + process.env.REACT_APP_API_URL + selectedAttachment.url)}`}
+                        width="100%"
+                        height="600px"
+                        title={selectedAttachment.name}
+                      />
+                    </div>
+                  ) : (
+                    <div className="text-viewer">
+                      <p>This file type cannot be previewed. Please download to view.</p>
+                      <button 
+                        className="btn btn-primary"
+                        onClick={() => handleDownloadAttachment(selectedAttachment)}
+                      >
+                        <i className="fas fa-download"></i>
+                        Download {selectedAttachment.name}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="modal-actions">
+                <button 
+                  className="btn btn-secondary"
+                  onClick={() => setShowAttachmentModal(false)}
+                >
+                  Close
+                </button>
+                <button 
+                  className="btn btn-primary"
+                  onClick={() => handleDownloadAttachment(selectedAttachment)}
+                >
+                  <i className="fas fa-download"></i>
+                  Download
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
-};
-
-// Helper function to get attachment icon
-const getAttachmentIcon = (type) => {
-  switch (type) {
-    case 'document': return 'fa-file-alt';
-    case 'presentation': return 'fa-file-powerpoint';
-    case 'notes': return 'fa-sticky-note';
-    default: return 'fa-file';
-  }
 };
 
 export default VideoPlayer;

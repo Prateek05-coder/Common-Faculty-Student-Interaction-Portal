@@ -1,5 +1,8 @@
 const Course = require('../models/Course');
 const User = require('../models/User');
+const Assignment = require('../models/Assignment');
+const { ensureCourseRelationships } = require('../utils/courseAccess');
+const { fixAccessControl } = require('../scripts/fixAccessControl');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -168,6 +171,81 @@ const getCourses = async (req, res) => {
   }
 };
 
+// @route   GET /api/courses/available
+// @desc    Get all available courses for enrollment (students can see all published courses)
+// @access  Private
+const getAvailableCourses = async (req, res) => {
+  try {
+    console.log('📚 Getting available courses for user:', req.user.email);
+    
+    const user = req.user;
+    const { search, semester, year } = req.query;
+    
+    let query = { 
+      isActive: true, 
+      isPublished: true // Only show published courses
+    };
+    
+    // Add search filters
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { code: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    if (semester) query.semester = semester;
+    if (year) query.year = parseInt(year);
+
+    const courses = await Course.find(query)
+      .populate('faculty', 'name email')
+      .populate('teachingAssistants', 'name email')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Add enrollment status for the current user
+    const coursesWithStatus = courses.map(course => {
+      let enrollmentStatus = 'not_enrolled';
+      let canEnroll = true;
+      
+      if (user.role === 'student') {
+        const isEnrolled = (course.enrolledStudents || []).some(e => 
+          e.student && e.student.toString() === user._id.toString() && e.status === 'active'
+        );
+        enrollmentStatus = isEnrolled ? 'enrolled' : 'not_enrolled';
+        canEnroll = !isEnrolled;
+      } else {
+        canEnroll = false; // Non-students can't enroll
+      }
+
+      return {
+        ...course,
+        enrollmentCount: (course.enrolledStudents || []).filter(e => e.status === 'active').length,
+        enrollmentStatus,
+        canEnroll,
+        userRole: getUserRoleInCourse(course, user._id, user.role)
+      };
+    });
+
+    console.log(`✅ Found ${coursesWithStatus.length} available courses`);
+
+    res.status(200).json({
+      success: true,
+      data: coursesWithStatus,
+      count: coursesWithStatus.length,
+      message: `Found ${coursesWithStatus.length} available courses`
+    });
+
+  } catch (error) {
+    console.error('💥 Get available courses error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to load available courses: ' + error.message
+    });
+  }
+};
+
 // Helper function to determine user role in course
 const getUserRoleInCourse = (course, userId, userRole) => {
   const userIdStr = userId.toString();
@@ -331,7 +409,16 @@ const createCourse = async (req, res) => {
         .populate('teachingAssistants', 'name email')
         .lean();
 
-      console.log('🎉 Course created successfully:', populatedCourse.code);
+      console.log('✅ Course created successfully:', savedCourse.code);
+
+      // Ensure proper course relationships are established
+      try {
+        await ensureCourseRelationships(savedCourse._id);
+        console.log('✅ Course relationships verified for:', savedCourse.code);
+      } catch (relationshipError) {
+        console.error('⚠️ Error ensuring course relationships:', relationshipError);
+        // Don't fail course creation if relationship check fails
+      }
 
       res.status(201).json({
         success: true,
@@ -945,9 +1032,415 @@ const getCourseSchedule = async (req, res) => {
   }
 };
 
+// @route   POST /api/courses/:id/enroll
+// @desc    Enroll student in course
+// @access  Private (Students only)
+const enrollInCourse = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = req.user;
+
+    console.log(`📝 Enrollment request: Student ${user.email} wants to enroll in course ${id}`);
+
+    // Only students can enroll
+    if (user.role !== 'student') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only students can enroll in courses'
+      });
+    }
+
+    const course = await Course.findById(id);
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: 'Course not found'
+      });
+    }
+
+    if (!course.isActive || !course.isPublished) {
+      return res.status(400).json({
+        success: false,
+        message: 'Course is not available for enrollment'
+      });
+    }
+
+    // Check if already enrolled
+    const isAlreadyEnrolled = (course.enrolledStudents || []).some(e => 
+      e.student.toString() === user._id.toString() && e.status === 'active'
+    );
+
+    if (isAlreadyEnrolled) {
+      return res.status(400).json({
+        success: false,
+        message: 'You are already enrolled in this course'
+      });
+    }
+
+    // Check enrollment limit
+    const currentEnrollment = (course.enrolledStudents || []).filter(e => e.status === 'active').length;
+    if (course.maxStudents && currentEnrollment >= course.maxStudents) {
+      return res.status(400).json({
+        success: false,
+        message: 'Course enrollment is full'
+      });
+    }
+
+    // Add student to course
+    course.enrolledStudents.push({
+      student: user._id,
+      enrolledAt: new Date(),
+      status: 'active'
+      // grade will be null by default and is allowed in enum
+    });
+
+    await course.save();
+
+    // Add course to student's enrolled courses
+    await User.findByIdAndUpdate(
+      user._id,
+      { 
+        $addToSet: { 
+          enrolledCourses: {
+            course: course._id,
+            enrolledAt: new Date()
+          }
+        }
+      }
+    );
+
+    console.log(`✅ Student ${user.email} enrolled in course ${course.code}`);
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully enrolled in ${course.code} - ${course.name}`
+    });
+
+  } catch (error) {
+    console.error('💥 Enroll error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to enroll in course: ' + error.message
+    });
+  }
+};
+
+// @route   POST /api/courses/:id/unenroll
+// @desc    Unenroll student from course
+// @access  Private (Students only)
+const unenrollFromCourse = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = req.user;
+
+    console.log(`📝 Unenrollment request: Student ${user.email} wants to unenroll from course ${id}`);
+
+    // Only students can unenroll
+    if (user.role !== 'student') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only students can unenroll from courses'
+      });
+    }
+
+    const course = await Course.findById(id);
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: 'Course not found'
+      });
+    }
+
+    // Check if enrolled
+    const enrollmentIndex = (course.enrolledStudents || []).findIndex(e => 
+      e.student.toString() === user._id.toString() && e.status === 'active'
+    );
+
+    if (enrollmentIndex === -1) {
+      return res.status(400).json({
+        success: false,
+        message: 'You are not enrolled in this course'
+      });
+    }
+
+    // Remove student from course (set status to inactive)
+    course.enrolledStudents[enrollmentIndex].status = 'inactive';
+    course.enrolledStudents[enrollmentIndex].unenrolledAt = new Date();
+
+    await course.save();
+
+    // Remove course from student's enrolled courses
+    await User.findByIdAndUpdate(
+      user._id,
+      { 
+        $pull: { 
+          enrolledCourses: { course: course._id }
+        }
+      }
+    );
+
+    console.log(`✅ Student ${user.email} unenrolled from course ${course.code}`);
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully unenrolled from ${course.code} - ${course.name}`
+    });
+
+  } catch (error) {
+    console.error('💥 Unenroll error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to unenroll from course: ' + error.message
+    });
+  }
+};
+
+// @route   POST /api/courses/:id/assign-ta
+// @desc    Assign TA to course
+// @access  Private (Faculty and Admin only)
+const assignTA = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { taId } = req.body;
+    const user = req.user;
+
+    if (!['faculty', 'admin'].includes(user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only faculty and admins can assign TAs'
+      });
+    }
+
+    const course = await Course.findById(id);
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: 'Course not found'
+      });
+    }
+
+    // Check if user has permission to modify this course
+    if (user.role === 'faculty' && course.faculty.toString() !== user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only assign TAs to your own courses'
+      });
+    }
+
+    // Verify TA exists and has correct role
+    const ta = await User.findById(taId);
+    if (!ta || ta.role !== 'ta') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid TA selected'
+      });
+    }
+
+    // Check if TA is already assigned
+    if (course.teachingAssistants.includes(taId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'TA is already assigned to this course'
+      });
+    }
+
+    // Add TA to course
+    course.teachingAssistants.push(taId);
+    await course.save();
+
+    console.log(`✅ TA ${ta.name} assigned to course ${course.code}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'TA assigned successfully'
+    });
+
+  } catch (error) {
+    console.error('💥 Assign TA error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to assign TA: ' + error.message
+    });
+  }
+};
+
+// @route   POST /api/courses/:id/remove-ta
+// @desc    Remove TA from course
+// @access  Private (Faculty and Admin only)
+const removeTA = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { taId } = req.body;
+    const user = req.user;
+
+    if (!['faculty', 'admin'].includes(user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only faculty and admins can remove TAs'
+      });
+    }
+
+    const course = await Course.findById(id);
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: 'Course not found'
+      });
+    }
+
+    // Check if user has permission to modify this course
+    if (user.role === 'faculty' && course.faculty.toString() !== user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only remove TAs from your own courses'
+      });
+    }
+
+    // Remove TA from course
+    course.teachingAssistants = course.teachingAssistants.filter(
+      ta => ta.toString() !== taId
+    );
+    await course.save();
+
+    console.log(`✅ TA removed from course ${course.code}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'TA removed successfully'
+    });
+
+  } catch (error) {
+    console.error('💥 Remove TA error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to remove TA: ' + error.message
+    });
+  }
+};
+
+// @route   POST /api/courses/debug-relationships
+// @desc    Debug and fix course relationships (Admin only)
+// @access  Private (Admin only)
+const debugCourseRelationships = async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only admins can debug course relationships'
+      });
+    }
+
+    console.log('🔧 Starting course relationships debug and fix...');
+
+    // Get all courses
+    const courses = await Course.find({})
+      .populate('faculty', 'name email')
+      .populate('teachingAssistants', 'name email');
+
+    const results = [];
+
+    for (const course of courses) {
+      const courseResult = {
+        courseId: course._id,
+        courseCode: course.code,
+        courseName: course.name,
+        issues: [],
+        fixes: []
+      };
+
+      // Check faculty relationship
+      if (!course.faculty) {
+        courseResult.issues.push('No faculty assigned');
+      } else {
+        console.log(`✅ Course ${course.code} has faculty: ${course.faculty.name}`);
+      }
+
+      // Ensure teachingAssistants array exists
+      if (!course.teachingAssistants) {
+        courseResult.issues.push('Missing teachingAssistants array');
+        course.teachingAssistants = [];
+        courseResult.fixes.push('Added teachingAssistants array');
+      }
+
+      // Ensure enrolledStudents array exists
+      if (!course.enrolledStudents) {
+        courseResult.issues.push('Missing enrolledStudents array');
+        course.enrolledStudents = [];
+        courseResult.fixes.push('Added enrolledStudents array');
+      }
+
+      // Save fixes if any
+      if (courseResult.fixes.length > 0) {
+        await course.save();
+        console.log(`🔧 Fixed ${courseResult.fixes.length} issues for course ${course.code}`);
+      }
+
+      results.push(courseResult);
+    }
+
+    console.log('✅ Course relationships debug completed');
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalCourses: courses.length,
+        coursesWithIssues: results.filter(r => r.issues.length > 0).length,
+        coursesFixed: results.filter(r => r.fixes.length > 0).length,
+        details: results
+      },
+      message: 'Course relationships debug completed'
+    });
+
+  } catch (error) {
+    console.error('💥 Debug course relationships error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error debugging course relationships: ' + error.message
+    });
+  }
+};
+
+// @route   POST /api/courses/fix-access-control
+// @desc    Run comprehensive access control fix (Admin only)
+// @access  Private (Admin only)
+const runAccessControlFix = async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only admins can run access control fixes'
+      });
+    }
+
+    console.log('🔧 Admin initiated access control fix...');
+
+    const result = await fixAccessControl();
+
+    res.status(200).json({
+      success: true,
+      data: result,
+      message: 'Access control fix completed successfully'
+    });
+
+  } catch (error) {
+    console.error('💥 Access control fix error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error running access control fix: ' + error.message
+    });
+  }
+};
+
 module.exports = {
   getCourses,
   createCourse,
+  getAvailableCourses,
+  enrollInCourse,
+  unenrollFromCourse,
   getMyCourses,
   getCourseById,
   uploadCourseMaterial,
@@ -956,5 +1449,9 @@ module.exports = {
   getVideoLectures,
   addScheduleItem,
   getCourseSchedule,
+  assignTA,
+  removeTA,
+  debugCourseRelationships,
+  runAccessControlFix,
   upload
 };

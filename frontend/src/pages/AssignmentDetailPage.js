@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
 const AssignmentDetailPage = () => {
-  const { id } = useParams();
+  const { assignmentId } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [assignment, setAssignment] = useState(null);
@@ -23,16 +23,11 @@ const AssignmentDetailPage = () => {
     feedback: ''
   });
 
-  useEffect(() => {
-    loadAssignment();
-    if (['faculty', 'ta', 'admin'].includes(user?.role)) {
-      loadSubmissions();
-    }
-  }, [id]);
-
-  const loadAssignment = async () => {
+  const loadAssignmentData = useCallback(async () => {
+    if (!assignmentId) return;
+    
     try {
-      const response = await axios.get(`${process.env.REACT_APP_API_URL}/assignments/${id}`);
+      const response = await axios.get(`${process.env.REACT_APP_API_URL}/assignments/${assignmentId}`);
       setAssignment(response.data.data);
     } catch (error) {
       console.error('Error loading assignment:', error);
@@ -45,42 +40,71 @@ const AssignmentDetailPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [assignmentId, navigate]);
 
-  const loadSubmissions = async () => {
+  const loadSubmissionsData = useCallback(async () => {
+    if (!assignmentId) return;
+    
     try {
-      const response = await axios.get(`${process.env.REACT_APP_API_URL}/assignments/${id}/submissions`);
+      const response = await axios.get(`${process.env.REACT_APP_API_URL}/assignments/${assignmentId}/submissions`);
       setSubmissions(response.data.data.submissions || []);
     } catch (error) {
       console.error('Error loading submissions:', error);
     }
-  };
+  }, [assignmentId]);
+
+  useEffect(() => {
+    loadAssignmentData();
+    if (['faculty', 'ta', 'admin'].includes(user?.role)) {
+      loadSubmissionsData();
+    }
+  }, [loadAssignmentData, loadSubmissionsData, user?.role]);
+
 
   const handleSubmitAssignment = async (e) => {
     e.preventDefault();
     
+    console.log('🚀 Starting assignment submission...');
+    console.log('Assignment ID:', assignmentId);
+    console.log('API URL:', process.env.REACT_APP_API_URL);
+    console.log('Submission form:', submissionForm);
+    
+    // Validate submission
+    if (!submissionForm.textSubmission.trim() && submissionForm.files.length === 0) {
+      toast.error('Please provide either text submission or upload files');
+      return;
+    }
+    
     const formData = new FormData();
     formData.append('textSubmission', submissionForm.textSubmission);
     
-    submissionForm.files.forEach((file) => {
+    submissionForm.files.forEach((file, index) => {
+      console.log(`Adding file ${index}:`, file.name, file.size);
       formData.append('files', file);
     });
 
     try {
-      await axios.post(`${process.env.REACT_APP_API_URL}/assignments/${id}/submit`, formData, {
+      console.log('📤 Sending request to:', `${process.env.REACT_APP_API_URL}/api/assignments/${assignmentId}/submit`);
+      
+      const response = await axios.post(`${process.env.REACT_APP_API_URL}/api/assignments/${assignmentId}/submit`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }
       });
 
+      console.log('✅ Submission successful:', response.data);
       toast.success('Assignment submitted successfully!');
       setShowSubmissionModal(false);
       setSubmissionForm({ textSubmission: '', files: [] });
-      loadAssignment();
+      loadAssignmentData();
 
     } catch (error) {
-      console.error('Error submitting assignment:', error);
-      toast.error('Failed to submit assignment');
+      console.error('❌ Submission error:', error);
+      console.error('Error response:', error.response?.data);
+      console.error('Error status:', error.response?.status);
+      
+      const errorMessage = error.response?.data?.message || 'Failed to submit assignment';
+      toast.error(errorMessage);
     }
   };
 
@@ -89,7 +113,7 @@ const AssignmentDetailPage = () => {
     
     try {
       await axios.put(
-        `${process.env.REACT_APP_API_URL}/assignments/${id}/submissions/${selectedSubmission._id}/grade`,
+        `${process.env.REACT_APP_API_URL}/assignments/${assignmentId}/submissions/${selectedSubmission._assignmentId}/grade`,
         gradingForm
       );
 
@@ -97,7 +121,7 @@ const AssignmentDetailPage = () => {
       setShowGradingModal(false);
       setSelectedSubmission(null);
       setGradingForm({ grade: '', feedback: '' });
-      loadSubmissions();
+      loadSubmissionsData();
 
     } catch (error) {
       console.error('Error grading submission:', error);
@@ -189,7 +213,7 @@ const AssignmentDetailPage = () => {
           {user.role === 'faculty' && (
             <button 
               className="btn btn-secondary"
-              onClick={() => navigate(`/assignments/${id}/edit`)}
+              onClick={() => navigate(`/assignments/${assignmentId}/edit`)}
             >
               <i className="fas fa-edit"></i>
               Edit Assignment
@@ -199,7 +223,7 @@ const AssignmentDetailPage = () => {
           {canGrade && (
             <button 
               className="btn btn-info"
-              onClick={() => navigate(`/assignments/${id}/submissions`)}
+              onClick={() => navigate(`/assignments/${assignmentId}/submissions`)}
             >
               <i className="fas fa-list"></i>
               View All Submissions
@@ -440,7 +464,7 @@ const AssignmentDetailPage = () => {
             <div className="submissions-list">
               {submissions.length > 0 ? (
                 submissions.map((submission) => (
-                  <div key={submission._id} className="submission-item">
+                  <div key={submission._assignmentId} className="submission-item">
                     <div className="submission-student">
                       <div className="student-avatar">
                         {submission.student?.avatar ? (
@@ -475,7 +499,7 @@ const AssignmentDetailPage = () => {
                     <div className="submission-actions">
                       <button 
                         className="btn btn-outline btn-sm"
-                        onClick={() => navigate(`/assignments/${id}/submissions/${submission._id}`)}
+                        onClick={() => navigate(`/assignments/${assignmentId}/submissions/${submission._assignmentId}`)}
                       >
                         <i className="fas fa-eye"></i>
                         View

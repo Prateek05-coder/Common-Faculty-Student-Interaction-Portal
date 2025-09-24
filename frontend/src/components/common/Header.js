@@ -1,12 +1,10 @@
 import React from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import useNotifications  from '../../hooks/useNotifications';
 import NotificationBell from '../notifications/NotificationBell';
 import { useSidebar } from '../../contexts/SidebarContext';
 
 const Header = () => {
   const { user, logout } = useAuth();
-  const { notifications, unreadCount } = useNotifications();
   const { toggleSidebar } = useSidebar();
 
   return (

@@ -1,6 +1,7 @@
 const Assignment = require('../models/Assignment');
 const Course = require('../models/Course');
 const User = require('../models/User');
+const Notification = require('../models/Notification');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -68,6 +69,7 @@ const createAssignment = async (req, res) => {
       instructions,
       allowedFileTypes,
       maxFileSize,
+      submissionType,
       isPublished
     } = req.body;
 
@@ -115,7 +117,7 @@ const createAssignment = async (req, res) => {
 
     // Check if user can create assignments for this course
     const canAccess = courseObj.faculty.toString() === user._id.toString() || 
-                     courseObj.teachingAssistants.includes(user._id) ||
+                     (courseObj.teachingAssistants || []).includes(user._id) ||
                      user.role === 'admin';
 
     if (!canAccess) {
@@ -137,6 +139,7 @@ const createAssignment = async (req, res) => {
       instructions: instructions || '',
       allowedFileTypes: allowedFileTypes || ['pdf', 'doc', 'docx', 'txt'],
       maxFileSize: maxFileSize ? parseInt(maxFileSize) : 10485760,
+      submissionType: submissionType || 'both',
       isPublished: isPublished !== undefined ? isPublished : true,
       submissions: [],
       isActive: true
@@ -155,6 +158,33 @@ const createAssignment = async (req, res) => {
       .populate('instructor', 'name email');
 
     console.log('🎉 Assignment created successfully:', populatedAssignment.title);
+
+    // Notify enrolled students about new assignment
+    try {
+      const courseWithStudents = await Course.findById(course).populate('enrolledStudents.student');
+      if (courseWithStudents && courseWithStudents.enrolledStudents.length > 0) {
+        const notifications = courseWithStudents.enrolledStudents
+          .filter(enrollment => enrollment.status === 'active')
+          .map(enrollment => ({
+            recipient: enrollment.student._id,
+            sender: user._id,
+            type: 'assignment_created',
+            title: 'New Assignment Created',
+            message: `New assignment "${populatedAssignment.title}" has been created in ${courseWithStudents.name}`,
+            relatedId: populatedAssignment._id,
+            relatedModel: 'Assignment',
+            isRead: false
+          }));
+
+        if (notifications.length > 0) {
+          await Notification.insertMany(notifications);
+          console.log(`📢 Sent ${notifications.length} notifications for new assignment`);
+        }
+      }
+    } catch (notificationError) {
+      console.error('⚠️ Failed to send notifications:', notificationError);
+      // Don't fail the assignment creation if notifications fail
+    }
 
     res.status(201).json({
       success: true,
@@ -304,8 +334,8 @@ const getAssignmentById = async (req, res) => {
     // Check access permissions
     const course = await Course.findById(assignment.course._id);
     const canAccess = course.faculty?.toString() === user._id.toString() || 
-                     course.teachingAssistants?.includes(user._id) ||
-                     course.enrolledStudents?.some(e => e.student.toString() === user._id.toString()) ||
+                     (course.teachingAssistants || []).includes(user._id) ||
+                     (course.enrolledStudents || []).some(e => e.student.toString() === user._id.toString()) ||
                      user.role === 'admin';
 
     if (!canAccess) {
@@ -359,6 +389,12 @@ const getAssignmentById = async (req, res) => {
 // @access  Private
 const submitAssignment = async (req, res) => {
   try {
+    console.log('🚀 Assignment submission started');
+    console.log('Assignment ID:', req.params.id);
+    console.log('User:', req.user?.email, req.user?.role);
+    console.log('Body:', req.body);
+    console.log('Files:', req.files?.length || 0, 'files uploaded');
+    
     const { id } = req.params;
     const user = req.user;
     const { textSubmission } = req.body;
@@ -400,6 +436,32 @@ const submitAssignment = async (req, res) => {
       });
     }
 
+    // Validate submission based on assignment type
+    const hasTextSubmission = textSubmission && textSubmission.trim() !== '';
+    const hasFileSubmission = req.files && req.files.length > 0;
+
+    // Check submission requirements based on assignment type
+    if (assignment.submissionType === 'text' && !hasTextSubmission) {
+      return res.status(400).json({
+        success: false,
+        message: 'This assignment requires a text submission'
+      });
+    }
+
+    if (assignment.submissionType === 'file' && !hasFileSubmission) {
+      return res.status(400).json({
+        success: false,
+        message: 'This assignment requires file upload(s)'
+      });
+    }
+
+    if (assignment.submissionType === 'both' && !hasTextSubmission && !hasFileSubmission) {
+      return res.status(400).json({
+        success: false,
+        message: 'This assignment requires either text submission or file upload(s)'
+      });
+    }
+
     // Handle file submissions
     let files = [];
     if (req.files && req.files.length > 0) {
@@ -424,6 +486,33 @@ const submitAssignment = async (req, res) => {
     await assignment.save();
 
     console.log(`✅ Assignment submitted: ${assignment.title} by ${user.email}`);
+
+    // Notify faculty and TAs about new submission
+    try {
+      const course = assignment.course;
+      const recipients = [course.faculty];
+      if (course.teachingAssistants && course.teachingAssistants.length > 0) {
+        recipients.push(...course.teachingAssistants);
+      }
+
+      const notifications = recipients.map(recipientId => ({
+        recipient: recipientId,
+        sender: user._id,
+        type: 'assignment_submitted',
+        title: 'New Assignment Submission',
+        message: `${user.name} has submitted assignment "${assignment.title}"`,
+        relatedId: assignment._id,
+        relatedModel: 'Assignment',
+        isRead: false
+      }));
+
+      if (notifications.length > 0) {
+        await Notification.insertMany(notifications);
+        console.log(`📢 Sent ${notifications.length} notifications for assignment submission`);
+      }
+    } catch (notificationError) {
+      console.error('⚠️ Failed to send submission notifications:', notificationError);
+    }
 
     res.status(200).json({
       success: true,
@@ -505,6 +594,25 @@ const gradeSubmission = async (req, res) => {
 
     console.log(`✅ Assignment graded: ${assignment.title} for student ${studentId}`);
 
+    // Notify student about grade
+    try {
+      const notification = new Notification({
+        recipient: studentId,
+        sender: user._id,
+        type: 'assignment_graded',
+        title: 'Assignment Graded',
+        message: `Your assignment "${assignment.title}" has been graded. Score: ${grade}/${assignment.maxPoints}`,
+        relatedId: assignment._id,
+        relatedModel: 'Assignment',
+        isRead: false
+      });
+
+      await notification.save();
+      console.log(`📢 Sent grade notification to student ${studentId}`);
+    } catch (notificationError) {
+      console.error('⚠️ Failed to send grade notification:', notificationError);
+    }
+
     res.status(200).json({
       success: true,
       message: 'Assignment graded successfully'
@@ -519,11 +627,77 @@ const gradeSubmission = async (req, res) => {
   }
 };
 
+// @route   GET /api/assignments/my-grades
+// @desc    Get student's grades for all assignments
+// @access  Private (Students only)
+const getMyGrades = async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user.role !== 'student') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only students can view their grades'
+      });
+    }
+
+    // Get all assignments from courses the student is enrolled in
+    const assignments = await Assignment.find({
+      'submissions.student': user._id,
+      'submissions.isGraded': true,
+      isActive: true
+    })
+    .populate('course', 'name code semester year faculty')
+    .populate('course.faculty', 'name')
+    .populate('submissions.gradedBy', 'name')
+    .sort({ 'submissions.gradedAt': -1 });
+
+    // Extract graded submissions for this student
+    const grades = [];
+    assignments.forEach(assignment => {
+      const submission = assignment.submissions.find(
+        sub => sub.student.toString() === user._id.toString() && sub.isGraded
+      );
+      
+      if (submission) {
+        grades.push({
+          _id: submission._id,
+          assignment: {
+            _id: assignment._id,
+            title: assignment.title,
+            maxPoints: assignment.maxPoints,
+            dueDate: assignment.dueDate
+          },
+          course: assignment.course,
+          score: submission.grade,
+          percentage: ((submission.grade / assignment.maxPoints) * 100).toFixed(1),
+          feedback: submission.feedback,
+          gradedAt: submission.gradedAt,
+          gradedBy: submission.gradedBy
+        });
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      data: grades
+    });
+
+  } catch (error) {
+    console.error('💥 Get my grades error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching grades'
+    });
+  }
+};
+
 module.exports = {
   createAssignment,
   getAssignments,
   getAssignmentById,
   submitAssignment,
   gradeSubmission,
+  getMyGrades,
   upload
 };

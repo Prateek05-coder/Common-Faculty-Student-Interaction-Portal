@@ -24,7 +24,7 @@ const ForumsPage = () => {
   const [createForm, setCreateForm] = useState({
     title: '',
     description: '',
-    category: 'general',
+    category: user?.role === 'student' ? 'help' : 'general',
     courseId: '',
     tags: []
   });

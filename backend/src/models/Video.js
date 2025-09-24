@@ -63,7 +63,27 @@ const videoSchema = new mongoose.Schema({
   isPublished: {
     type: Boolean,
     default: false
-  }
+  },
+  // Track student completion
+  completions: [{
+    student: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    completedAt: {
+      type: Date,
+      default: Date.now
+    },
+    watchTime: {
+      type: Number, // in seconds
+      default: 0
+    },
+    isCompleted: {
+      type: Boolean,
+      default: false
+    }
+  }]
 }, {
   timestamps: true
 });

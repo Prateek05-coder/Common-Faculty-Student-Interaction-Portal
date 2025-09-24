@@ -180,15 +180,15 @@ userSchema.methods.canAccessCourse = function(courseId) {
   if (this.role === 'admin') return true;
   
   if (this.role === 'student') {
-    return this.enrolledCourses.some(ec => ec.course.toString() === courseIdStr);
+    return (this.enrolledCourses || []).some(ec => ec.course.toString() === courseIdStr);
   }
   
   if (this.role === 'faculty') {
-    return this.teachingCourses.some(tc => tc.toString() === courseIdStr);
+    return (this.teachingCourses || []).some(tc => tc.toString() === courseIdStr);
   }
   
   if (this.role === 'ta') {
-    return this.assistingCourses.some(ac => ac.toString() === courseIdStr);
+    return (this.assistingCourses || []).some(ac => ac.toString() === courseIdStr);
   }
   
   return false;
@@ -197,9 +197,9 @@ userSchema.methods.canAccessCourse = function(courseId) {
 // Method to get accessible courses
 userSchema.methods.getAccessibleCourses = function() {
   if (this.role === 'student') {
-    return this.enrolledCourses.map(ec => ec.course);
+    return (this.enrolledCourses || []).map(ec => ec.course);
   } else if (this.role === 'faculty') {
-    return this.teachingCourses;
+    return this.teachingCourses || [];
   } else if (this.role === 'ta') {
     return this.assistingCourses || [];
   }

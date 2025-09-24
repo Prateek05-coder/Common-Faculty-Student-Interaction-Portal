@@ -90,8 +90,14 @@ const AssignmentsPage = () => {
     
     try {
       const response = await axios.post(`${process.env.REACT_APP_API_URL}/assignments`, {
-        ...assignmentForm,
-        faculty: user._id
+        title: assignmentForm.title,
+        description: assignmentForm.description,
+        instructions: assignmentForm.instructions,
+        course: assignmentForm.courseId, // Backend expects 'course', not 'courseId'
+        dueDate: assignmentForm.dueDate,
+        maxPoints: assignmentForm.maxPoints,
+        submissionType: assignmentForm.submissionType,
+        isPublished: true
       });
 
       setAssignments(prev => [response.data.data, ...prev]);

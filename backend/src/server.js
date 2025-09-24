@@ -7,6 +7,9 @@ const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
 
+// Fix Mongoose deprecation warning
+mongoose.set('strictQuery', false);
+
 const app = express();
 const server = http.createServer(app);
 
@@ -23,26 +26,33 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Serve static files
-app.use('/uploads', express.static( 'uploads'));
-
 // Create upload directories
 const uploadDirs = [
-  'uploads/assignments',
-  'uploads/avatars',
-  'uploads/videos',
-  'uploads/thumbnails',
-  'uploads/documents',
-  'uploads/subtitles'
+  'assignments',
+  'avatars',
+  'videos',
+  'thumbnails',
+  'documents',
+  'subtitles'
 ];
 
+// Ensure base uploads directory exists under backend/uploads
+const baseUploadsDir = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(baseUploadsDir)) {
+  fs.mkdirSync(baseUploadsDir, { recursive: true });
+  console.log(`📁 Created directory: uploads`);
+}
+
 uploadDirs.forEach(dir => {
-  const fullPath = path.join(__dirname, dir);
+  const fullPath = path.join(baseUploadsDir, dir);
   if (!fs.existsSync(fullPath)) {
     fs.mkdirSync(fullPath, { recursive: true });
-    console.log(`📁 Created directory: ${dir}`);
+    console.log(`📁 Created directory: uploads/${dir}`);
   }
 });
+
+// Serve static files for uploads
+app.use('/uploads', express.static(baseUploadsDir));
 
 // Socket.io handlers
 require('./socket/chatSocket')(io);
@@ -72,8 +82,6 @@ app.use('/api/videos', videoRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/calendar', calendarRoutes);
-
-app.use('/uploads', express.static('uploads'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -124,12 +132,14 @@ const connectDB = async () => {
 // Connect to database
 connectDB();
 
-// Start server
+// Start server with error handling
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📡 Socket.io server ready`);
-  console.log(`🌐 API Documentation: http://localhost:${PORT}/api/health`);
+
+const startServer = () => {
+  server.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📡 Socket.io server ready`);
+    console.log(`🌐 API Documentation: http://localhost:${PORT}/api/health`);
   
   console.log('\n📋 Registered API Routes:');
   console.log('   POST /api/auth/register');
@@ -148,9 +158,27 @@ server.listen(PORT, () => {
   console.log('   GET  /api/dashboard/student-stats');
   console.log('   GET  /api/dashboard/faculty-stats');
   console.log('   GET  /api/admin/stats');
-  console.log('   GET  /api/calendar/events');
-  console.log('   GET  /api/chat/conversations');
-  console.log('   And more...\n');
-});
+    console.log('   GET  /api/calendar/events');
+    console.log('   GET  /api/chat/conversations');
+    console.log('   And more...\n');
+  }).on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`❌ Port ${PORT} is already in use!`);
+      console.log(`💡 Try one of these solutions:`);
+      console.log(`   1. Kill the process using port ${PORT}:`);
+      console.log(`      Windows: netstat -ano | findstr :${PORT} then taskkill /PID <PID> /F`);
+      console.log(`      Mac/Linux: lsof -ti:${PORT} | xargs kill -9`);
+      console.log(`   2. Use a different port by setting PORT environment variable`);
+      console.log(`   3. Set PORT=5001 in your .env file`);
+      process.exit(1);
+    } else {
+      console.error('❌ Server startup error:', err);
+      process.exit(1);
+    }
+  });
+};
+
+// Start the server
+startServer();
 
 module.exports = app;

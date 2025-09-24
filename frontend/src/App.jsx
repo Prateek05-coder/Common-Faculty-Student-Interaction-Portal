@@ -18,13 +18,21 @@ import RegisterPage from './components/auth/RegisterPage';
 // Pages
 import DashboardPage from './pages/DashboardPage';
 import CoursesPage from './pages/CoursesPage';
+import CourseDetailPage from './pages/CourseDetailPage';
 import AssignmentsPage from './pages/AssignmentsPage';
+import AssignmentDetailPage from './pages/AssignmentDetailPage';
 import ForumsPage from './pages/ForumsPage';
 import ForumDetailPage from './pages/ForumDetailPage';
 import CalendarPage from './pages/CalendarPage';
 import ChatPage from './pages/ChatPage';
 import DocumentsPage from './pages/DocumentsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
+import GradingPage from './pages/GradingPage';
+import TAManagementPage from './pages/TAManagementPage';
+import GradesPage from './pages/GradesPage';
+import StudentManagementPage from './pages/StudentManagementPage';
+import UserManagementPage from './pages/UserManagementPage';
+import TACoursesPage from './pages/TACoursesPage';
 import ProfilePage from './pages/ProfilePage';
 import SettingsPage from './pages/SettingsPage';
 import VideoLecturesPage from './pages/VideoLecturesPage';
@@ -93,8 +101,7 @@ function App() {
               <Routes>
                 {/* Public Routes */}
                 <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
-                <Route path="/login" element={<LoginPage />} />
-                <Route path="/register" element={<RegisterPage />} />
+                <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
                 {/* Protected Routes */}
                 <Route path="/" element={
                   <ProtectedRoute>
@@ -121,7 +128,7 @@ function App() {
                 <Route path="/courses/:courseId" element={
                   <ProtectedRoute>
                     <AppLayout>
-                      <CoursesPage />
+                      <CourseDetailPage />
                     </AppLayout>
                   </ProtectedRoute>
                 } />
@@ -137,7 +144,7 @@ function App() {
                 <Route path="/assignments/:assignmentId" element={
                   <ProtectedRoute>
                     <AppLayout>
-                      <AssignmentsPage />
+                      <AssignmentDetailPage />
                     </AppLayout>
                   </ProtectedRoute>
                 } />
@@ -227,6 +234,53 @@ function App() {
                  </ProtectedRoute>
                 } />
 
+                <Route path="/grading" element={
+                  <ProtectedRoute requiredRoles={['faculty', 'ta', 'admin']}>
+                    <AppLayout>
+                      <GradingPage />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
+
+                <Route path="/ta-management" element={
+                  <ProtectedRoute requiredRoles={['faculty', 'admin']}>
+                    <AppLayout>
+                      <TAManagementPage />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
+
+                <Route path="/grades" element={
+                  <ProtectedRoute requiredRoles={['student']}>
+                    <AppLayout>
+                      <GradesPage />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
+
+                <Route path="/student-management" element={
+                  <ProtectedRoute requiredRoles={['faculty', 'admin']}>
+                    <AppLayout>
+                      <StudentManagementPage />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
+
+                <Route path="/user-management" element={
+                  <ProtectedRoute requiredRoles={['admin']}>
+                    <AppLayout>
+                      <UserManagementPage />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
+
+                <Route path="/ta-courses" element={
+                  <ProtectedRoute requiredRoles={['ta']}>
+                    <AppLayout>
+                      <TACoursesPage />
+                    </AppLayout>
+                  </ProtectedRoute>
+                } />
 
                 {/* Admin Routes */}
                 <Route path="/admin/*" element={

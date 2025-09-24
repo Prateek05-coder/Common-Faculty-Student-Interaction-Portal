@@ -38,7 +38,8 @@ const getStudentStats = async (req, res) => {
       let gradedAssignments = 0;
 
       assignments.forEach(assignment => {
-        const submission = assignment.submissions.find(s => s.student.toString() === studentId.toString());
+        const submissions = assignment.submissions || [];
+        const submission = submissions.find(s => s.student.toString() === studentId.toString());
         if (submission) {
           submittedCount++;
           if (submission.isGraded) {
@@ -55,40 +56,39 @@ const getStudentStats = async (req, res) => {
 
       // CRITICAL: This structure matches EXACTLY what StudentDashboard.js expects
       const stats = {
-        // Core statistics
-        totalCourses: courses.length,
+        // Core statistics (these are what the dashboard displays)
+        enrolledCourses: courses.length,  // NUMBER for stat display
         totalAssignments: assignments.length,
         submittedAssignments: submittedCount,
         gradedAssignments: gradedCount,
         pendingAssignments: assignments.length - submittedCount,
         averageGrade: parseFloat(averageGrade),
         
-        // CRITICAL: enrolledCourses field that StudentDashboard.js reads at line 61
-        enrolledCourses: courses.map(course => ({
+        // CRITICAL: courses field that StudentDashboard.js maps over
+        courses: courses.map(course => ({
           _id: course._id,
           name: course.name,
           code: course.code,
-          faculty: course.faculty ? course.faculty.name : 'Unknown',
+          faculty: course.faculty ? { name: course.faculty.name } : null,
+          facultyName: course.faculty ? course.faculty.name : 'Unknown',
           facultyEmail: course.faculty ? course.faculty.email : '',
           semester: course.semester,
           year: course.year,
           enrollmentStatus: 'active',
           description: course.description || '',
           credits: course.credits || 0,
+          enrolledStudents: course.enrolledStudents || [],
           // Additional fields that might be useful
           materialsCount: course.materials ? course.materials.filter(m => m.isVisible).length : 0,
           videosCount: course.videoLectures ? course.videoLectures.filter(v => v.isVisible).length : 0
         })),
         
-        // Additional course info (for backward compatibility)
-        courses: courses.map(course => ({
-          _id: course._id,
-          name: course.name,
-          code: course.code,
-          faculty: course.faculty ? course.faculty.name : 'Unknown',
-          semester: course.semester,
-          year: course.year
-        })),
+        // Additional dashboard data
+        upcomingDeadlines: [],
+        recentActivity: {
+          forums: [],
+          videos: []
+        },
 
         // Recent assignments
         recentAssignments: assignments.slice(0, 5).map(assignment => ({
@@ -97,7 +97,7 @@ const getStudentStats = async (req, res) => {
           dueDate: assignment.dueDate,
           course: assignment.course,
           maxPoints: assignment.maxPoints,
-          isSubmitted: assignment.submissions.some(s => s.student.toString() === studentId.toString())
+          isSubmitted: (assignment.submissions || []).some(s => s.student.toString() === studentId.toString())
         }))
       };
 
@@ -160,7 +160,7 @@ const getFacultyStats = async (req, res) => {
     // Get total enrolled students across all courses
     let totalStudents = 0;
     courses.forEach(course => {
-      totalStudents += course.enrolledStudents.filter(e => e.status === 'active').length;
+      totalStudents += (course.enrolledStudents || []).filter(e => e.status === 'active').length;
     });
 
     // Get assignments for faculty's courses
@@ -173,7 +173,7 @@ const getFacultyStats = async (req, res) => {
     // Count pending submissions (ungraded)
     let pendingSubmissions = 0;
     assignments.forEach(assignment => {
-      pendingSubmissions += assignment.submissions.filter(s => !s.isGraded).length;
+      pendingSubmissions += (assignment.submissions || []).filter(s => !s.isGraded).length;
     });
 
     // Recent activity (last 7 days)
@@ -191,7 +191,7 @@ const getFacultyStats = async (req, res) => {
         _id: course._id,
         name: course.name,
         code: course.code,
-        enrollmentCount: course.enrolledStudents.filter(e => e.status === 'active').length,
+        enrollmentCount: (course.enrolledStudents || []).filter(e => e.status === 'active').length,
         semester: course.semester,
         year: course.year
       }))
@@ -232,7 +232,7 @@ const getTAStats = async (req, res) => {
     // Get total students across assigned courses
     let totalStudents = 0;
     courses.forEach(course => {
-      totalStudents += course.enrolledStudents.filter(e => e.status === 'active').length;
+      totalStudents += (course.enrolledStudents || []).filter(e => e.status === 'active').length;
     });
 
     // Get assignments for TA's courses
@@ -245,7 +245,7 @@ const getTAStats = async (req, res) => {
     // Count pending submissions
     let pendingSubmissions = 0;
     assignments.forEach(assignment => {
-      pendingSubmissions += assignment.submissions.filter(s => !s.isGraded).length;
+      pendingSubmissions += (assignment.submissions || []).filter(s => !s.isGraded).length;
     });
 
     const stats = {
@@ -258,7 +258,7 @@ const getTAStats = async (req, res) => {
         name: course.name,
         code: course.code,
         faculty: course.faculty ? course.faculty.name : 'Unknown',
-        enrollmentCount: course.enrolledStudents.filter(e => e.status === 'active').length,
+        enrollmentCount: (course.enrolledStudents || []).filter(e => e.status === 'active').length,
         semester: course.semester,
         year: course.year
       }))

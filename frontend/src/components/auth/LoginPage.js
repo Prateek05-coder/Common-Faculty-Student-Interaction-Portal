@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -16,6 +16,15 @@ const LoginPage = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [demoAccounts, setDemoAccounts] = useState([]);
 
+  const loadDemoAccounts = useCallback(async () => {
+    try {
+      const accounts = await getDemoAccounts();
+      setDemoAccounts(accounts);
+    } catch (error) {
+      console.error('Failed to load demo accounts:', error);
+    }
+  }, [getDemoAccounts]);
+
   useEffect(() => {
     // Redirect if already authenticated
     if (isAuthenticated) {
@@ -26,16 +35,7 @@ const LoginPage = () => {
   useEffect(() => {
     // Load demo accounts for testing
     loadDemoAccounts();
-  }, []);
-
-  const loadDemoAccounts = async () => {
-    try {
-      const accounts = await getDemoAccounts();
-      setDemoAccounts(accounts);
-    } catch (error) {
-      console.error('Failed to load demo accounts:', error);
-    }
-  };
+  }, [loadDemoAccounts]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();

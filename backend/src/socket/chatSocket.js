@@ -7,7 +7,7 @@ module.exports = (io) => {
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth.token;
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-jwt-secret');
       const user = await User.findById(decoded.id);
       
       socket.userId = user._id;

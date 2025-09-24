@@ -18,9 +18,9 @@ const getCalendarEvents = async (req, res) => {
     let accessibleCourses = [];
     
     if (user.role === 'student') {
-      accessibleCourses = user.enrolledCourses.map(ec => ec.course);
+      accessibleCourses = (user.enrolledCourses || []).map(ec => ec.course);
     } else if (user.role === 'faculty') {
-      accessibleCourses = user.teachingCourses;
+      accessibleCourses = user.teachingCourses || [];
     } else if (user.role === 'ta') {
       accessibleCourses = user.assistingCourses || [];
     } else if (user.role === 'admin') {
@@ -50,7 +50,7 @@ const getCalendarEvents = async (req, res) => {
       // Determine if assignment is submitted (for students)
       let isSubmitted = false;
       if (user.role === 'student') {
-        isSubmitted = assignment.submissions.some(sub => 
+        isSubmitted = (assignment.submissions || []).some(sub => 
           sub.student.toString() === user._id.toString()
         );
       }

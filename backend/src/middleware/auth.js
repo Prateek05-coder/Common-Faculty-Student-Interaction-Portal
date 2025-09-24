@@ -25,7 +25,7 @@ const auth = async (req, res, next) => {
 
     try {
       // Verify token
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key-change-this');
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-jwt-secret');
       
       // Get user from database
       const user = await User.findById(decoded.id)

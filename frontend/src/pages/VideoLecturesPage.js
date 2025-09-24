@@ -1,25 +1,22 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import VideoPlayer from '../components/video/VideoPlayer';
+import VideoUploadModal from '../components/video/VideoUploadModal';
+import VideoEditModal from '../components/video/VideoEditModal';
 import axios from 'axios';
 import toast from 'react-hot-toast';
+import '../styles/video.css';
 
 const VideoLecturesPage = () => {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const [videos, setVideos] = useState([]);
-  const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedVideo, setSelectedVideo] = useState(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingVideo, setEditingVideo] = useState(null);
 
-  useEffect(() => {
-    loadVideos();
-    loadCourses();
-  }, []);
-
-  const loadVideos = async () => {
+  const loadVideos = useCallback(async () => {
     try {
       const response = await axios.get(`${process.env.REACT_APP_API_URL}/videos`);
       setVideos(response.data.data || []);
@@ -29,33 +26,49 @@ const VideoLecturesPage = () => {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    loadVideos();
+  }, [loadVideos]);
+
+  const canUploadVideos = ['faculty', 'ta', 'admin'].includes(user?.role);
+
+  const handleVideoUploaded = (newVideo) => {
+    setVideos(prev => [newVideo, ...prev]);
+    loadVideos(); // Refresh the list
   };
 
-  const loadCourses = async () => {
-    try {
-      let endpoint = '';
-      switch (user?.role) {
-        case 'student':
-          endpoint = '/courses/enrolled';
-          break;
-        case 'faculty':
-          endpoint = '/courses/teaching';
-          break;
-        case 'ta':
-          endpoint = '/courses/assisting';
-          break;
-        default:
-          endpoint = '/courses';
-      }
+  const handleEditVideo = (video) => {
+    setEditingVideo(video);
+    setShowEditModal(true);
+  };
 
-      const response = await axios.get(`${process.env.REACT_APP_API_URL}${endpoint}`);
-      setCourses(response.data.data || []);
-    } catch (error) {
-      console.error('Error loading courses:', error);
+  const handleDeleteVideo = async (video) => {
+    if (window.confirm(`Are you sure you want to delete "${video.title}"? This action cannot be undone.`)) {
+      try {
+        await axios.delete(`${process.env.REACT_APP_API_URL}/videos/${video._id}`);
+        toast.success('Video deleted successfully');
+        loadVideos(); // Reload videos
+      } catch (error) {
+        console.error('Error deleting video:', error);
+        toast.error('Failed to delete video');
+      }
     }
   };
 
-  const canUploadVideos = ['faculty', 'ta', 'admin'].includes(user?.role);
+  const handleUpdateVideo = async (updatedData) => {
+    try {
+      await axios.put(`${process.env.REACT_APP_API_URL}/videos/${editingVideo._id}`, updatedData);
+      toast.success('Video updated successfully');
+      setShowEditModal(false);
+      setEditingVideo(null);
+      loadVideos(); // Reload videos
+    } catch (error) {
+      console.error('Error updating video:', error);
+      toast.error('Failed to update video');
+    }
+  };
 
   if (loading) {
     return <div className="loading">Loading videos...</div>;
@@ -94,9 +107,10 @@ const VideoLecturesPage = () => {
               <div key={video._id} className="video-card">
                 <div className="video-thumbnail">
                   <img 
-                    src={video.thumbnailUrl || '/default-thumbnail.jpg'} 
+                    src={video.thumbnailUrl ? `${process.env.REACT_APP_API_URL}${video.thumbnailUrl}` : '/default-thumbnail.jpg'} 
                     alt={video.title}
                     onClick={() => setSelectedVideo(video)}
+                    className="thumbnail-image"
                   />
                   <div className="video-duration">
                     {Math.floor(video.duration / 60)}:{(video.duration % 60).toString().padStart(2, '0')}
@@ -133,6 +147,34 @@ const VideoLecturesPage = () => {
                       </span>
                     </div>
                   )}
+
+                  {/* Edit/Delete options for faculty and TA */}
+                  {(['faculty', 'ta', 'admin'].includes(user?.role)) && (
+                    <div className="video-actions">
+                      <button 
+                        className="action-btn edit-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditVideo(video);
+                        }}
+                        title="Edit Video"
+                      >
+                        <i className="fas fa-edit"></i>
+                        Edit
+                      </button>
+                      <button 
+                        className="action-btn delete-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteVideo(video);
+                        }}
+                        title="Delete Video"
+                      >
+                        <i className="fas fa-trash"></i>
+                        Delete
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ))
@@ -157,6 +199,24 @@ const VideoLecturesPage = () => {
           )}
         </div>
       )}
+
+      {/* Video Upload Modal */}
+      <VideoUploadModal
+        isOpen={showUploadModal}
+        onClose={() => setShowUploadModal(false)}
+        onVideoUploaded={handleVideoUploaded}
+      />
+
+      {/* Video Edit Modal */}
+      <VideoEditModal
+        video={editingVideo}
+        isOpen={showEditModal}
+        onClose={() => {
+          setShowEditModal(false);
+          setEditingVideo(null);
+        }}
+        onUpdate={handleUpdateVideo}
+      />
     </div>
   );
 };

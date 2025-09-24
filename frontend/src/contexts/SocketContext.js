@@ -1,28 +1,47 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
-import { useAuth } from '../hooks/useAuth';
+import { useAuth } from './AuthContext';
 
 export const SocketContext = createContext();
 
 export const SocketProvider = ({ children }) => {
   const [socket, setSocket] = useState(null);
   const [connected, setConnected] = useState(false);
-  const { user, token } = useAuth();
+  const { user } = useAuth();
 
   useEffect(() => {
+    const token = localStorage.getItem('token');
     if (token && user) {
-      const newSocket = io(process.env.REACT_APP_SOCKET_URL, {
-        auth: { token }
+      console.log('🔌 Initializing socket connection...');
+      
+      const newSocket = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000', {
+        auth: { token },
+        transports: ['websocket', 'polling'],
+        timeout: 20000,
+        forceNew: true,
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000
       });
 
       newSocket.on('connect', () => {
-        console.log('Socket connected');
+        console.log('✅ Socket connected successfully');
         setConnected(true);
       });
 
-      newSocket.on('disconnect', () => {
-        console.log('Socket disconnected');
+      newSocket.on('disconnect', (reason) => {
+        console.log('❌ Socket disconnected:', reason);
         setConnected(false);
+      });
+
+      newSocket.on('connect_error', (error) => {
+        console.log('💥 Socket connection error:', error);
+        setConnected(false);
+      });
+
+      newSocket.on('reconnect', (attemptNumber) => {
+        console.log('🔄 Socket reconnected after', attemptNumber, 'attempts');
+        setConnected(true);
       });
 
       setSocket(newSocket);
@@ -33,7 +52,7 @@ export const SocketProvider = ({ children }) => {
         setConnected(false);
       };
     }
-  }, [token, user]);
+  }, [user]);
 
   const value = {
     socket,

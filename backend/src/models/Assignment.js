@@ -46,6 +46,11 @@ const assignmentSchema = new mongoose.Schema({
     type: Number,
     default: 10485760 // 10MB
   },
+  submissionType: {
+    type: String,
+    enum: ['text', 'file', 'both'],
+    default: 'both'
+  },
   
   // Student submissions
   submissions: [{

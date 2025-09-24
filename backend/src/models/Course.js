@@ -73,7 +73,7 @@ const courseSchema = new mongoose.Schema({
     },
     grade: {
       type: String,
-      enum: ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D', 'F', 'I', 'W'],
+      enum: ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D', 'F', 'I', 'W', null],
       default: null
     }
   }],
@@ -354,7 +354,7 @@ courseSchema.index({ isActive: 1, isPublished: 1 });
 
 // Virtual for enrolled student count
 courseSchema.virtual('enrollmentCount').get(function() {
-  return this.enrolledStudents.filter(student => student.status === 'active').length;
+  return (this.enrolledStudents || []).filter(student => student.status === 'active').length;
 });
 
 // Virtual for full course identifier
@@ -364,14 +364,23 @@ courseSchema.virtual('fullCode').get(function() {
 
 // Pre-save middleware to update stats
 courseSchema.pre('save', function(next) {
+  // Initialize stats if not present
+  if (!this.stats) {
+    this.stats = {
+      totalMaterials: 0,
+      totalVideos: 0,
+      totalEnrollments: 0
+    };
+  }
+  
   // Update material count
-  this.stats.totalMaterials = this.materials.filter(m => m.isVisible).length;
+  this.stats.totalMaterials = (this.materials || []).filter(m => m.isVisible).length;
   
   // Update video count
-  this.stats.totalVideos = this.videoLectures.filter(v => v.isVisible).length;
+  this.stats.totalVideos = (this.videoLectures || []).filter(v => v.isVisible).length;
   
   // Update enrollment count
-  this.stats.totalEnrollments = this.enrolledStudents.filter(s => s.status === 'active').length;
+  this.stats.totalEnrollments = (this.enrolledStudents || []).filter(s => s.status === 'active').length;
   
   next();
 });

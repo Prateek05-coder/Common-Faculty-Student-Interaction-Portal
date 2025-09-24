@@ -6,6 +6,7 @@ const {
   getAssignmentById,
   submitAssignment,
   gradeSubmission,
+  getMyGrades,
   upload
 } = require('../controllers/assignmentController');
 
@@ -17,6 +18,10 @@ router.use(auth);
 // Assignment CRUD routes
 router.post('/', createAssignment);                      // POST /api/assignments - Create assignment
 router.get('/', getAssignments);                        // GET /api/assignments - Get all assignments
+
+// Student grades (must come before /:id route)
+router.get('/my-grades', getMyGrades);                                      // GET /api/assignments/my-grades - Get student's grades
+
 router.get('/:id', getAssignmentById);                  // GET /api/assignments/:id - Get assignment by ID
 
 // Assignment submission and grading

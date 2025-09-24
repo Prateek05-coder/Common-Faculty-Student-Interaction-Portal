@@ -189,9 +189,20 @@ const uploadVideo = async (req, res) => {
       }
 
       // Process attachments
+      console.log('🔍 Processing attachments...');
+      console.log('📁 req.files:', req.files);
+      console.log('📝 req.body:', req.body);
+      
       const attachments = [];
       if (req.files?.attachments) {
-        req.files.attachments.forEach(file => {
+        console.log(`📎 Found ${req.files.attachments.length} attachments`);
+        req.files.attachments.forEach((file, index) => {
+          console.log(`📎 Processing attachment ${index}:`, {
+            name: file.originalname,
+            size: file.size,
+            filename: file.filename
+          });
+          
           attachments.push({
             name: file.originalname,
             type: getAttachmentType(file.originalname),
@@ -200,6 +211,8 @@ const uploadVideo = async (req, res) => {
           });
         });
       }
+      
+      console.log('✅ Final attachments array:', attachments);
 
       // Generate subtitles if requested (placeholder - integrate with speech-to-text service)
       let subtitles = [];
@@ -578,12 +591,152 @@ const getAttachmentType = (filename) => {
   return 'document';
 };
 
+// @route   POST /api/videos/:id/complete
+// @desc    Mark video as completed by student
+// @access  Private (Students only)
+const markVideoComplete = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { watchTime } = req.body;
+    const user = req.user;
+
+    if (user.role !== 'student') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only students can mark videos as completed'
+      });
+    }
+
+    const video = await Video.findById(id);
+    if (!video) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
+
+    // Check if completion already exists
+    const existingCompletion = video.completions.find(
+      c => c.student.toString() === user._id.toString()
+    );
+
+    if (existingCompletion) {
+      // Update existing completion
+      existingCompletion.isCompleted = true;
+      existingCompletion.watchTime = Math.max(existingCompletion.watchTime || 0, watchTime || 0);
+      existingCompletion.completedAt = new Date();
+    } else {
+      // Add new completion
+      video.completions.push({
+        student: user._id,
+        isCompleted: true,
+        watchTime: watchTime || 0,
+        completedAt: new Date()
+      });
+    }
+
+    await video.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Video marked as completed',
+      data: {
+        videoId: video._id,
+        isCompleted: true,
+        watchTime: watchTime || 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Error marking video complete:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error marking video as completed'
+    });
+  }
+};
+
+// @route   PUT /api/videos/:id
+// @desc    Edit video (Faculty/TA only)
+// @access  Private
+const editVideo = async (req, res) => {
+  try {
+    const user = req.user;
+    const { id } = req.params;
+    const { title, description, isPublished } = req.body;
+
+    if (!['faculty', 'ta', 'admin'].includes(user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Faculty, TA, or Admin role required.'
+      });
+    }
+
+    const video = await Video.findById(id).populate('course');
+    if (!video) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
+
+    // Check access permissions
+    let hasAccess = false;
+    if (user.role === 'admin') {
+      hasAccess = true;
+    } else if (user.role === 'faculty') {
+      hasAccess = user.teachingCourses.some(tc => 
+        tc.toString() === video.course._id.toString()
+      ) || video.uploadedBy.toString() === user._id.toString();
+    } else if (user.role === 'ta') {
+      hasAccess = (user.assistingCourses || []).some(ac => 
+        ac.toString() === video.course._id.toString()
+      ) || video.uploadedBy.toString() === user._id.toString();
+    }
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied to edit this video'
+      });
+    }
+
+    // Update video fields
+    if (title) video.title = title.trim();
+    if (description !== undefined) video.description = description.trim();
+    if (isPublished !== undefined) video.isPublished = isPublished;
+
+    await video.save();
+
+    // Populate the updated video
+    await video.populate([
+      { path: 'course', select: 'name code' },
+      { path: 'uploadedBy', select: 'name email role avatar' }
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: video,
+      message: 'Video updated successfully'
+    });
+
+  } catch (error) {
+    console.error('Edit video error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating video'
+    });
+  }
+};
+
+
 module.exports = {
   getVideos,
   uploadVideo,
   getVideo,
   addComment,
   toggleLike,
-  updateVideo,
-  deleteVideo
+  editVideo,
+  deleteVideo,
+  markVideoComplete
 };

@@ -16,6 +16,28 @@ const ChatPage = () => {
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [searchUsers, setSearchUsers] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [userFilter, setUserFilter] = useState('all'); // all, students, faculty, ta
+
+  useEffect(() => {
+    loadConversations();
+    loadUsers(); // Load users for search
+  }, []);
+
+  const loadUsers = async () => {
+    try {
+      const response = await axios.get(`${process.env.REACT_APP_API_URL}/users/search?role=${userFilter}`);
+      setSearchUsers(response.data.data || []);
+    } catch (error) {
+      console.error('Error loading users:', error);
+      toast.error('Failed to load users');
+    }
+  };
+
+  useEffect(() => {
+    if (showNewChatModal) {
+      loadUsers();
+    }
+  }, [userFilter, showNewChatModal]);
 
   useEffect(() => {
     // Initialize socket connection
@@ -48,11 +70,9 @@ const ChatPage = () => {
           updated[index] = conversation;
           return updated;
         }
-        return [conversation, ...prev];
+        return [...prev, conversation];
       });
     });
-
-    loadConversations();
 
     return () => {
       newSocket.disconnect();
@@ -117,32 +137,55 @@ const ChatPage = () => {
   };
 
   const searchForUsers = async (query) => {
-    if (!query.trim()) {
+    if (!query.trim() || query.trim().length < 2) {
       setSearchUsers([]);
       return;
     }
 
     try {
-      const response = await axios.get(`${process.env.REACT_APP_API_URL}/users/search?query=${query}&role=${getRoleFilter()}`);
-      setSearchUsers(response.data.data || []);
+      const roleFilter = userFilter === 'all' ? '' : userFilter;
+      const response = await axios.get(`${process.env.REACT_APP_API_URL}/users/search`, {
+        params: {
+          query: query.trim(),
+          role: roleFilter
+        }
+      });
+      
+      // Filter based on role permissions
+      const allowedRoles = getFilteredRoles();
+      const filteredUsers = response.data.data.filter(u => allowedRoles.includes(u.role));
+      
+      setSearchUsers(filteredUsers);
     } catch (error) {
       console.error('Error searching users:', error);
+      toast.error('Failed to search users');
     }
+  };
+
+  const getFilteredRoles = () => {
+    // Filter users based on selected filter and user permissions
+    const allowedRoles = getRoleFilter().split(',');
+    
+    if (userFilter === 'all') {
+      return allowedRoles;
+    }
+    
+    return allowedRoles.includes(userFilter) ? [userFilter] : allowedRoles;
   };
 
   const getRoleFilter = () => {
     // Define who can chat with whom based on role
     switch (user?.role) {
       case 'student':
-        return 'faculty,ta'; // Students can chat with faculty and TAs
+        return 'faculty,ta,admin'; // Students can chat with faculty, TAs, and admins
       case 'faculty':
-        return 'student,ta'; // Faculty can chat with students and TAs
+        return 'student,ta,admin'; // Faculty can chat with students, TAs, and admins
       case 'ta':
-        return 'student,faculty'; // TAs can chat with students and faculty
+        return 'student,faculty,admin'; // TAs can chat with students, faculty, and admins
       case 'admin':
-        return 'all'; // Admin can chat with everyone
+        return 'student,faculty,ta'; // Admin can chat with everyone
       default:
-        return 'all';
+        return 'student,faculty,ta,admin';
     }
   };
 
@@ -426,17 +469,40 @@ const ChatPage = () => {
             </div>
 
             <div className="modal-body">
-              <div className="search-users">
-                <input
-                  type="text"
-                  placeholder="Search for users..."
-                  value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    searchForUsers(e.target.value);
-                  }}
-                  className="search-input"
-                />
+              <div className="search-controls">
+                <div className="role-filter">
+                  <label>Filter by role:</label>
+                  <select 
+                    value={userFilter} 
+                    onChange={(e) => {
+                      setUserFilter(e.target.value);
+                      if (searchQuery) {
+                        searchForUsers(searchQuery);
+                      }
+                    }}
+                    className="role-select"
+                  >
+                    <option value="all">All Users</option>
+                    {getRoleFilter().split(',').map(role => (
+                      <option key={role} value={role}>
+                        {role.charAt(0).toUpperCase() + role.slice(1)}s
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div className="search-users">
+                  <input
+                    type="text"
+                    placeholder="Search for users..."
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      searchForUsers(e.target.value);
+                    }}
+                    className="search-input"
+                  />
+                </div>
               </div>
 
               <div className="users-list">

@@ -360,10 +360,52 @@ const searchUsers = async (req, res) => {
   }
 };
 
+// @route   GET /api/users
+// @desc    Get all users (with role filtering)
+// @access  Private (Faculty, TA, Admin only)
+const getAllUsers = async (req, res) => {
+  try {
+    const user = req.user;
+    const { role } = req.query;
+
+    // Only allow faculty, TA, and admin to see other users
+    if (!['faculty', 'ta', 'admin'].includes(user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    let query = {};
+    
+    // Filter by role if specified
+    if (role && role !== 'all') {
+      query.role = role;
+    }
+
+    const users = await User.find(query)
+      .select('name email role createdAt')
+      .sort({ name: 1 });
+
+    res.status(200).json({
+      success: true,
+      data: users
+    });
+
+  } catch (error) {
+    console.error('Get all users error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching users'
+    });
+  }
+};
+
 module.exports = {
   updateMyProfile,
   changePassword,
   getMyProfile,
   getDashboardStats,
-  searchUsers
+  searchUsers,
+  getAllUsers
 };
